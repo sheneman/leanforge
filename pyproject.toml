@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "forge-lean-prover"
+version = "0.1.0"
+description = "Multi-agent Lean 4 theorem proving system"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "httpx",
+  "pydantic>=2",
+  "sentence-transformers",
+  "numpy",
+  "faiss-cpu",
+  "aiofiles",
+  "python-dotenv",
+  "structlog",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+  "mypy",
+  "httpx",
+]
+
+# ---- Ruff -----------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["services", "tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---- Pytest ----------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+# ---- Mypy ------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

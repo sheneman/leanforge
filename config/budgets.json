@@ -1,0 +1,8 @@
+{
+  "default_branch_budget": 50,
+  "default_timeout_secs": 120,
+  "max_repair_attempts": 5,
+  "max_web_search_calls": 3,
+  "max_synthesis_calls_per_branch": 10,
+  "tactic_timeout_ms": 30000
+}

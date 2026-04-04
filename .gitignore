@@ -1,0 +1,86 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+
+# =========================
+# Lean 4 / Lake
+# =========================
+.lake/
+lean/build/
+lean/.lake/
+lake-packages/
+lake-manifest.json.bak
+
+# =========================
+# Node / NPM
+# =========================
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# =========================
+# Data & model artifacts
+# =========================
+data/
+*.bin
+*.pt
+*.onnx
+*.safetensors
+*.index
+*.faiss
+*.npy
+*.npz
+*.parquet
+*.arrow
+
+# =========================
+# Environment & secrets
+# =========================
+.env
+.env.local
+.env.*.local
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# =========================
+# Docker
+# =========================
+docker-compose.override.yml
+
+# =========================
+# Logs & temp
+# =========================
+logs/
+*.log
+tmp/

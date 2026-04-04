@@ -1,0 +1,16 @@
+{
+  "_comment": "Example ProofTask payload for the forge-lean-prover orchestrator.",
+  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "theorem_statement": "theorem add_comm_nat (m n : Nat) : m + n = n + m",
+  "context": "-- No extra context needed; this is a basic Nat theorem.",
+  "imports": [
+    "Mathlib.Tactic"
+  ],
+  "max_branches": 50,
+  "timeout_secs": 120,
+  "metadata": {
+    "source": "smoke_test",
+    "difficulty": "trivial",
+    "tags": ["arithmetic", "commutativity"]
+  }
+}

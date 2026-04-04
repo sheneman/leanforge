@@ -1,0 +1,93 @@
+version: "3.9"
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file: .env
+  restart: unless-stopped
+
+services:
+  # ---------- Lean project builder (run-once) -----------------------
+  lean-builder:
+    <<: *common
+    command: ["lake", "build"]
+    working_dir: /app/lean
+    volumes:
+      - lean-lake-cache:/app/lean/.lake
+
+  # ---------- Orchestrator (Nemotron-3-Super-120B) ------------------
+  orchestrator:
+    <<: *common
+    command:
+      [
+        "uvicorn",
+        "services.orchestrator.main:app",
+        "--host", "0.0.0.0",
+        "--port", "8100",
+      ]
+    ports:
+      - "${ORCHESTRATOR_PORT:-8100}:8100"
+    depends_on:
+      lean-builder:
+        condition: service_completed_successfully
+
+  # ---------- Lean environment service ------------------------------
+  lean_env:
+    <<: *common
+    command:
+      [
+        "uvicorn",
+        "services.lean_env.main:app",
+        "--host", "0.0.0.0",
+        "--port", "8101",
+      ]
+    ports:
+      - "${LEAN_ENV_PORT:-8101}:8101"
+    volumes:
+      - lean-lake-cache:/app/lean/.lake
+    depends_on:
+      lean-builder:
+        condition: service_completed_successfully
+
+  # ---------- Proof search (Leanstral) ------------------------------
+  proof_search:
+    <<: *common
+    command:
+      [
+        "uvicorn",
+        "services.proof_search.main:app",
+        "--host", "0.0.0.0",
+        "--port", "8102",
+      ]
+    ports:
+      - "${PROOF_SEARCH_PORT:-8102}:8102"
+
+  # ---------- Retrieval (embedding + FAISS) -------------------------
+  retrieval:
+    <<: *common
+    command:
+      [
+        "uvicorn",
+        "services.retrieval.main:app",
+        "--host", "0.0.0.0",
+        "--port", "8103",
+      ]
+    ports:
+      - "${RETRIEVAL_PORT:-8103}:8103"
+
+  # ---------- Telemetry / dashboard ---------------------------------
+  telemetry:
+    <<: *common
+    command:
+      [
+        "uvicorn",
+        "services.telemetry.main:app",
+        "--host", "0.0.0.0",
+        "--port", "8104",
+      ]
+    ports:
+      - "${TELEMETRY_PORT:-8104}:8104"
+
+volumes:
+  lean-lake-cache:
