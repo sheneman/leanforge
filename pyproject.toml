@@ -29,6 +29,9 @@ dev = [
   "httpx",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["services"]
+
 # ---- Ruff -----------------------------------------------------------
 [tool.ruff]
 target-version = "py311"

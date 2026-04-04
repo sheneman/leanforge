@@ -1,10 +1,11 @@
+import Mathlib.Tactic
+import Mathlib.Data.Nat.Prime.Basic
+
 /-!
 # Benchmark: Number Theory
 
 Number-theoretic theorems for benchmarking.
 -/
-import Mathlib.Tactic
-import Mathlib.Data.Nat.Prime.Basic
 
 /-- 2 is prime. -/
 theorem two_is_prime : Nat.Prime 2 := Nat.prime_iff.mpr ⟨by norm_num, by omega⟩

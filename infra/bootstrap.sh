@@ -14,7 +14,7 @@ if command -v elan &>/dev/null; then
     echo "[OK] elan found: $(elan --version 2>&1 | head -1)"
 else
     echo "[..] elan not found. Installing..."
-    curl https://elan-init.github.io/elan/elan-init.sh -sSf | sh -s -- -y
+    curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
     # Refresh PATH so the rest of the script can see elan / lean.
     export PATH="$HOME/.elan/bin:$PATH"
     echo "[OK] elan installed: $(elan --version 2>&1 | head -1)"

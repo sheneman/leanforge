@@ -1,11 +1,12 @@
+import Mathlib.Topology.Basic
+import Mathlib.Topology.Instances.Real
+import Mathlib.Topology.Compactness.Compact
+
 /-!
 # Benchmark: Topology
 
 Topological theorems for benchmarking.
 -/
-import Mathlib.Topology.Basic
-import Mathlib.Topology.Instances.Real
-import Mathlib.Topology.Compactness.Compact
 
 open TopologicalSpace Set
 

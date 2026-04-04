@@ -1,10 +1,11 @@
+import Mathlib.Tactic
+
 /-!
 # Human-Written Proof Examples
 
 Reference proofs written by humans for comparison and retrieval training.
 These demonstrate idiomatic Lean 4 + Mathlib proof style.
 -/
-import Mathlib.Tactic
 
 /-- De Morgan's law for propositions. -/
 theorem de_morgan_not_and (p q : Prop) : ¬(p ∧ q) ↔ ¬p ∨ ¬q := by

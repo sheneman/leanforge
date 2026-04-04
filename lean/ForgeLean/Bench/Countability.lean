@@ -1,12 +1,13 @@
+import Mathlib.Topology.Basic
+import Mathlib.Order.Filter.Basic
+import Mathlib.Data.Set.Countable
+import Mathlib.Data.Real.Basic
+
 /-!
 # Benchmark: Countability
 
 Theorems related to countability and cardinality.
 -/
-import Mathlib.Topology.Basic
-import Mathlib.Order.Filter.Basic
-import Mathlib.Data.Set.Countable
-import Mathlib.Data.Real.Basic
 
 open Set
 

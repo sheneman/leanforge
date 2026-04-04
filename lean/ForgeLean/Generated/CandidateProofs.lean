@@ -1,10 +1,11 @@
+import Mathlib.Tactic
+
 /-!
 # Generated Candidate Proofs
 
 This file is written to by the proof search service.
 Each candidate is wrapped in a namespace to avoid conflicts.
 -/
-import Mathlib.Tactic
 
 namespace ForgeLean.Generated
 

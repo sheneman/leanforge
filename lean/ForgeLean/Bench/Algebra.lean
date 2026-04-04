@@ -1,11 +1,12 @@
+import Mathlib.Tactic
+import Mathlib.GroupTheory.Subgroup.Basic
+import Mathlib.RingTheory.Ideal.Basic
+
 /-!
 # Benchmark: Algebra
 
 Basic algebraic theorems for benchmarking.
 -/
-import Mathlib.Tactic
-import Mathlib.GroupTheory.Subgroup.Basic
-import Mathlib.RingTheory.Ideal.Basic
 
 /-- Every group has a unique identity. -/
 theorem group_identity_unique {G : Type*} [Group G] (e : G)

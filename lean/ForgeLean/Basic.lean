@@ -1,9 +1,10 @@
+import Mathlib.Tactic
+
 /-!
 # ForgeLean.Basic
 
 Core utilities and helpers for the forge-lean-prover system.
 -/
-import Mathlib.Tactic
 
 /-- A trivial test theorem used by smoke tests. -/
 theorem forge_trivial : 1 + 1 = 2 := by norm_num
