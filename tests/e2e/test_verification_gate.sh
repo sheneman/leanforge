@@ -42,7 +42,7 @@ echo "------------------------------------"
 TEST_NAME="correct_proof_accepted"
 RESP=$(curl -s -X POST "${LEAN_ENV_URL}/compile" \
     -H "Content-Type: application/json" \
-    -d '{"source": "theorem ok : 1 + 1 = 2 := by norm_num\n"}')
+    -d '{"source": "import Mathlib.Tactic\n\ntheorem ok : 1 + 1 = 2 := by norm_num\n"}')
 
 SUCCESS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success','MISSING'))" 2>/dev/null || echo "PARSE_ERROR")
 
@@ -66,7 +66,7 @@ fi
 TEST_NAME="wrong_proof_rejected"
 RESP=$(curl -s -X POST "${LEAN_ENV_URL}/compile" \
     -H "Content-Type: application/json" \
-    -d '{"source": "theorem bad : 1 + 1 = 3 := by norm_num\n"}')
+    -d '{"source": "import Mathlib.Tactic\n\ntheorem bad : 1 + 1 = 3 := by norm_num\n"}')
 
 SUCCESS=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success','MISSING'))" 2>/dev/null || echo "PARSE_ERROR")
 
