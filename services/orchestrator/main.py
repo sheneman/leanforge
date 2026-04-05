@@ -4,8 +4,10 @@ Coordinates the prove loop: retrieve -> synthesize -> verify -> repair.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -280,7 +282,26 @@ class OrchestratorEngine:
 
             # 4. Attempt repair loop for this failed candidate
             repair_count = 0
+            prev_error: str = ""
+            repeated_error_count = 0
             while repair_count < self.max_repair_attempts and self.branches_used < self.max_branches:
+                # Detect repeated structural errors — abort early if same
+                # parse/structural error repeats 3+ times (won't be fixed by
+                # re-synthesizing tactics; the theorem statement itself is broken)
+                cur_error = " ".join(result.diagnostics[:2]) if result.diagnostics else ""
+                if cur_error and cur_error == prev_error:
+                    repeated_error_count += 1
+                else:
+                    repeated_error_count = 0
+                prev_error = cur_error
+                if repeated_error_count >= 2:
+                    log.warning(
+                        "repair_abort_repeated_error",
+                        task_id=self.task.task_id,
+                        error=cur_error[:200],
+                    )
+                    break
+
                 repair_count += 1
                 self.branches_used += 1
                 repaired = await self.repair(result)
@@ -376,6 +397,23 @@ class OrchestratorEngine:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+def _normalize_theorem_statement(stmt: str) -> str:
+    """Ensure the statement is a proper Lean 4 theorem/lemma declaration.
+
+    If the user provides a bare proposition like ``∀ (a b : ℕ), Even a → ...``,
+    wrap it in a ``theorem`` declaration.  If it already starts with ``theorem``,
+    ``lemma``, ``def``, or ``example``, return it unchanged.
+    """
+    stripped = stmt.strip()
+    # Already a proper declaration
+    if re.match(r"^(theorem|lemma|def|example)\s", stripped):
+        return stripped
+    # Bare proposition — wrap it
+    # Generate a simple name from a hash to avoid collisions
+    name = "auto_" + hashlib.md5(stripped.encode()).hexdigest()[:8]
+    return f"theorem {name} : {stripped}"
+
+
 def _build_lean_source(
     theorem_statement: str,
     imports: list[str],
@@ -386,13 +424,17 @@ def _build_lean_source(
 
     Includes proper import statements (defaults to ``import Mathlib.Tactic``),
     any context declarations, the theorem statement, and the proof body.
+
+    If the theorem_statement is a bare proposition (e.g. ``∀ ...``), it is
+    automatically wrapped in a ``theorem`` declaration.
     """
+    stmt = _normalize_theorem_statement(theorem_statement)
     import_lines = "\n".join(f"import {i}" for i in imports) if imports else "import Mathlib.Tactic"
     parts = [import_lines, ""]
     if context and context.strip():
         parts.append(context)
         parts.append("")
-    parts.append(f"{theorem_statement} := by")
+    parts.append(f"{stmt} := by")
     parts.append(f"  {proof_body}")
     parts.append("")
     return "\n".join(parts)
