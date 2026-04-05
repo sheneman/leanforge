@@ -6,32 +6,26 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 PIDS_FILE="$REPO_ROOT/.pids"
-
-# Clear any stale PID file.
 : > "$PIDS_FILE"
-
-declare -A SERVICES=(
-    ["orchestrator"]="services.orchestrator.main:app:8100"
-    ["lean_env"]="services.lean_env.main:app:8101"
-    ["proof_search"]="services.proof_search.main:app:8102"
-    ["retrieval"]="services.retrieval.main:app:8103"
-    ["telemetry"]="services.telemetry.main:app:8104"
-)
 
 echo "=== Starting forge-lean-prover services ==="
 
-for svc in "${!SERVICES[@]}"; do
-    IFS=":" read -r mod1 mod2 port <<< "${SERVICES[$svc]}"
-    module="${mod1}:${mod2}"
-
-    echo "[..] Starting $svc on port $port ..."
+start_svc() {
+    local name="$1" module="$2" port="$3"
+    echo "[..] Starting $name on port $port ..."
     uvicorn "$module" --host 127.0.0.1 --port "$port" \
         --log-level info \
-        >> "$REPO_ROOT/data/$svc.log" 2>&1 &
-    pid=$!
-    echo "$pid $svc $port" >> "$PIDS_FILE"
-    echo "[OK] $svc  pid=$pid  port=$port"
-done
+        >> "$REPO_ROOT/data/${name}.log" 2>&1 &
+    local pid=$!
+    echo "$pid $name $port" >> "$PIDS_FILE"
+    echo "[OK] $name  pid=$pid  port=$port"
+}
+
+start_svc orchestrator   "services.orchestrator.main:app"   8100
+start_svc lean_env       "services.lean_env.main:app"       8101
+start_svc proof_search   "services.proof_search.main:app"   8102
+start_svc retrieval      "services.retrieval.main:app"       8103
+start_svc telemetry      "services.telemetry.main:app"       8104
 
 echo ""
 echo "All services started.  PID file: $PIDS_FILE"
