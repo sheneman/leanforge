@@ -1,14 +1,18 @@
 """Retrieval service for forge-lean-prover.
 
-Provides theorem search over a keyword-indexed corpus of mathlib theorems
-with a large built-in fallback covering common proof targets.
+Provides theorem search over a FAISS vector index of mathlib declarations
+with a keyword-indexed fallback corpus covering common proof targets.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
+from pathlib import Path
 
+import httpx
+import numpy as np
 import structlog
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -23,7 +27,10 @@ load_dotenv()
 
 log = structlog.get_logger()
 
-INDEX_PATH = os.getenv("INDEX_PATH", "data/corpus/index.faiss")
+INDEX_PATH = os.getenv("INDEX_PATH", "data/vectors/index.faiss")
+METADATA_PATH = os.getenv("METADATA_PATH", "data/vectors/metadata.jsonl")
+NEMOTRON_API_KEY = os.environ.get("NEMOTRON_API_KEY", "")
+NEMOTRON_API_BASE = os.environ.get("NEMOTRON_API_BASE", "https://mindrouter.uidaho.edu/v1")
 
 app = FastAPI(title="Retrieval Service", version="0.1.0")
 
@@ -264,30 +271,118 @@ def _score(query_tokens: set[str], doc_tokens: set[str]) -> float:
 
 
 class VectorIndex:
-    """Keyword-based theorem retrieval with tag-augmented scoring.
+    """Theorem retrieval using FAISS vector search with keyword fallback."""
 
-    TODO: Replace with sentence-transformers + FAISS for semantic search.
-    """
-
-    def __init__(self, index_path: str = INDEX_PATH) -> None:
+    def __init__(self, index_path: str = INDEX_PATH, metadata_path: str = METADATA_PATH) -> None:
         self.index_path = index_path
-        self._indexed = False
+        self.metadata_path = metadata_path
+        self._use_faiss = False
+        self._faiss_index = None
+        self._faiss_metadata: list[dict] = []
+        self._http_client: httpx.Client | None = None
+
+        # Keyword fallback corpus
         self._corpus: list[TheoremMatch] = list(_CORPUS)
-        self._doc_count = len(self._corpus)
-        # Pre-tokenize corpus for fast search
         self._doc_tokens: list[set[str]] = []
         for thm in self._corpus:
             text = f"{thm.name} {thm.statement} {thm.source} {thm.module}"
             self._doc_tokens.append(_tokenize(text))
 
+        # Try to load FAISS index
+        self._try_load_faiss()
+
+    def _try_load_faiss(self) -> None:
+        """Attempt to load FAISS index and metadata from disk."""
+        index_p = Path(self.index_path)
+        meta_p = Path(self.metadata_path)
+
+        if not index_p.exists() or not meta_p.exists():
+            log.info("faiss_not_available", index_exists=index_p.exists(), meta_exists=meta_p.exists())
+            return
+
+        try:
+            import faiss
+            self._faiss_index = faiss.read_index(str(index_p))
+            self._faiss_metadata = []
+            with open(meta_p) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        self._faiss_metadata.append(json.loads(line))
+            self._use_faiss = True
+            log.info("faiss_loaded", vectors=self._faiss_index.ntotal, metadata=len(self._faiss_metadata))
+        except Exception as e:
+            log.error("faiss_load_failed", error=str(e))
+            self._use_faiss = False
+
+    def _get_http_client(self) -> httpx.Client:
+        """Return a cached httpx client for embedding queries."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.Client(timeout=10.0)
+        return self._http_client
+
+    def _embed_query(self, query: str) -> np.ndarray | None:
+        """Embed a single query string via mindrouter."""
+        if not NEMOTRON_API_KEY:
+            log.warning("no_api_key_for_embedding")
+            return None
+
+        url = f"{NEMOTRON_API_BASE}/embeddings"
+        try:
+            client = self._get_http_client()
+            resp = client.post(
+                url,
+                headers={"Authorization": f"Bearer {NEMOTRON_API_KEY}"},
+                json={"model": "Qwen/Qwen3-Embedding-8B", "input": [query]},
+            )
+            resp.raise_for_status()
+            vec = np.array(resp.json()["data"][0]["embedding"], dtype=np.float32)
+            # Normalize for cosine similarity
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            return vec
+        except Exception as e:
+            log.error("query_embedding_failed", error=str(e))
+            return None
+
     def search(self, query: str, top_k: int = 10, filters: dict | None = None) -> list[TheoremMatch]:
         """Search for theorems matching the query."""
+        if self._use_faiss:
+            return self._search_faiss(query, top_k)
+        return self._search_keyword(query, top_k)
+
+    def _search_faiss(self, query: str, top_k: int) -> list[TheoremMatch]:
+        """Search using FAISS vector index."""
+        vec = self._embed_query(query)
+        if vec is None:
+            log.warning("faiss_fallback_to_keyword", reason="embedding_failed")
+            return self._search_keyword(query, top_k)
+
+        vec_2d = vec.reshape(1, -1)
+        scores, indices = self._faiss_index.search(vec_2d, top_k)
+
+        results: list[TheoremMatch] = []
+        for score, idx in zip(scores[0], indices[0]):
+            if idx < 0 or idx >= len(self._faiss_metadata):
+                continue
+            meta = self._faiss_metadata[idx]
+            results.append(TheoremMatch(
+                name=meta["name"],
+                statement=meta["statement"],
+                module=meta.get("module", ""),
+                score=round(float(score), 4),
+                source="mathlib",
+            ))
+        return results
+
+    def _search_keyword(self, query: str, top_k: int) -> list[TheoremMatch]:
+        """Fallback keyword search over built-in corpus."""
         query_tokens = _tokenize(query)
 
         scored: list[tuple[float, int]] = []
         for i, doc_tok in enumerate(self._doc_tokens):
             s = _score(query_tokens, doc_tok)
-            # Bonus: if any query token appears in the theorem name (exact substring)
             name_lower = self._corpus[i].name.lower()
             for qt in query_tokens:
                 if qt in name_lower:
@@ -302,22 +397,22 @@ class VectorIndex:
             if s <= 0.0:
                 continue
             thm = self._corpus[i].model_copy()
-            # Clean the source field (remove tags)
             thm.source = thm.source.split("|")[0]
             thm.score = round(s, 4)
             results.append(thm)
         return results
 
     def reindex(self) -> dict:
-        """Trigger re-indexing. Stub returns stats."""
+        """Trigger re-indexing and reload FAISS if available."""
         log.info("reindex_triggered")
-        self._indexed = True
-        return {"status": "complete", "doc_count": self._doc_count}
+        self._try_load_faiss()
+        return {"status": "complete", "doc_count": self._faiss_index.ntotal if self._use_faiss else len(self._corpus)}
 
     def stats(self) -> dict:
         return {
-            "indexed": self._indexed,
-            "doc_count": self._doc_count,
+            "use_faiss": self._use_faiss,
+            "faiss_vectors": self._faiss_index.ntotal if self._use_faiss and self._faiss_index else 0,
+            "keyword_corpus_size": len(self._corpus),
             "index_path": self.index_path,
         }
 
