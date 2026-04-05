@@ -1,6 +1,6 @@
 {
-  "model_id": "nvidia/llama-3.3-nemotron-super-49b-v1",
-  "provider": "nvidia_nim",
+  "model_id": "Nemotron-3-Super-120b",
+  "provider": "mindrouter",
   "api_base_env": "NEMOTRON_API_BASE",
   "api_key_env": "NEMOTRON_API_KEY",
   "max_tokens": 4096,

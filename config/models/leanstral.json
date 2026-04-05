@@ -1,6 +1,6 @@
 {
-  "model_id": "leanstral-v1",
-  "provider": "custom",
+  "model_id": "leanstral:119b",
+  "provider": "mindrouter",
   "api_base_env": "LEANSTRAL_API_BASE",
   "api_key_env": "LEANSTRAL_API_KEY",
   "max_tokens": 2048,
