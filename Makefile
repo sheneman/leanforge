@@ -6,6 +6,9 @@ ifneq (,$(wildcard .env))
   export
 endif
 
+# Ensure elan binaries are on PATH
+export PATH := $(HOME)/.elan/bin:$(PATH)
+
 SERVICE_HOST   ?= localhost
 ORCHESTRATOR_PORT ?= 8100
 LEAN_ENV_PORT     ?= 8101

@@ -3,12 +3,22 @@
 ## Purpose
 FALLBACK ONLY. Uses Brave Search MCP to find theorem names, current mathlib documentation, package compatibility information, repository issues, and external proof examples from the web. Provides supplementary information when the local retrieval index is insufficient.
 
+## Gate Condition (MUST be met before invoking)
+**NEVER use this skill as the first step. It is gated behind lean-retrieve.**
+
+Before calling web-search, ALL of the following must be true:
+1. You have already called lean-retrieve (POST localhost:8103/search) with at least one query.
+2. lean-retrieve returned fewer than 3 results with score > 0.5, OR returned no results at all.
+3. You have a specific information gap that local retrieval cannot fill.
+
+If any of these conditions is not met, DO NOT call web-search. Go back and call lean-retrieve first.
+
 ## When to Use
 - **ONLY after lean-retrieve returns insufficient results** (fewer than 3 results with score > 0.5, or no results at all).
 - When looking up current mathlib4 API documentation or recent changes.
 - When diagnosing a package compatibility issue (e.g., toolchain version mismatches).
 - When searching for known issues or workarounds in GitHub repos.
-- **Do NOT use as the default first step.** Always try lean-retrieve first.
+- **NEVER as the default first step.** Always try lean-retrieve first. Always.
 
 ## Inputs
 | Field | Type | Required | Description |

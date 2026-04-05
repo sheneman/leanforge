@@ -31,7 +31,15 @@ log = structlog.get_logger()
 
 LEAN_BIN = os.getenv("LEAN_BIN", "lean")
 LAKE_BIN = os.getenv("LAKE_BIN", "lake")
-LEAN_PROJECT_DIR = os.getenv("LEAN_PROJECT_DIR", "")
+# Default the project dir to the lean/ subdirectory of the repo when the env
+# var is set.  This lets the orchestrator compile proofs against the project's
+# Mathlib / lakefile configuration automatically.
+_raw_project_dir = os.getenv("LEAN_PROJECT_DIR", "")
+if _raw_project_dir:
+    LEAN_PROJECT_DIR = _raw_project_dir
+else:
+    _repo_lean_dir = str(Path(__file__).resolve().parents[2] / "lean")
+    LEAN_PROJECT_DIR = _repo_lean_dir if Path(_repo_lean_dir).is_dir() else ""
 COMPILE_TIMEOUT = int(os.getenv("COMPILE_TIMEOUT", "60"))
 
 app = FastAPI(title="Lean Environment Service", version="0.1.0")
@@ -42,6 +50,7 @@ app = FastAPI(title="Lean Environment Service", version="0.1.0")
 # ---------------------------------------------------------------------------
 class CompileRequest(BaseModel):
     source: str
+    project_dir: Optional[str] = None
 
 
 class CompileFileRequest(BaseModel):
@@ -306,7 +315,17 @@ async def health():
 
 @app.post("/compile")
 async def compile_source(req: CompileRequest):
-    result = await _runner.compile_source(req.source)
+    """Compile Lean source.
+
+    Accepts an optional ``project_dir`` override so the orchestrator can
+    point compilation at a specific Lean project (e.g. the ``lean/``
+    directory of this repo).
+    """
+    if req.project_dir:
+        runner = LeanRunner(project_dir=req.project_dir)
+    else:
+        runner = _runner
+    result = await runner.compile_source(req.source)
     return result.model_dump()
 
 

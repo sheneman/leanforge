@@ -5,6 +5,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Ensure elan/lean/lake are on PATH
+if [ -d "$HOME/.elan/bin" ]; then
+    export PATH="$HOME/.elan/bin:$PATH"
+fi
+
 PIDS_FILE="$REPO_ROOT/.pids"
 : > "$PIDS_FILE"
 
