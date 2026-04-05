@@ -165,8 +165,15 @@ def load_declarations() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Embedding
 # ---------------------------------------------------------------------------
+CHECKPOINT_PATH = EMBEDDINGS_PATH.parent / "checkpoint.npz"
+
+
 def embed_declarations(declarations: list[dict]) -> np.ndarray:
-    """Embed declarations using mindrouter API in batches."""
+    """Embed declarations using mindrouter API in batches.
+
+    Saves checkpoints every 5000 declarations so embedding can resume
+    after failures (502s, rate limits, etc).
+    """
     api_key = os.environ.get("NEMOTRON_API_KEY", "")
     if not api_key:
         print("ERROR: NEMOTRON_API_KEY environment variable not set")
@@ -176,23 +183,39 @@ def embed_declarations(declarations: list[dict]) -> np.ndarray:
     url = f"{api_base}/embeddings"
 
     batch_size = 64
-    max_retries = 3
-    all_embeddings: list[np.ndarray] = []
+    max_retries = 5
+    checkpoint_interval = 5000
 
     # Prepare input strings
     inputs = [f"{d['name']}: {d['statement']}" for d in declarations]
 
+    # Resume from checkpoint if available
+    start_idx = 0
+    all_embeddings: list[np.ndarray] = []
+    if CHECKPOINT_PATH.exists():
+        try:
+            ckpt = np.load(str(CHECKPOINT_PATH))
+            saved = ckpt["embeddings"]
+            start_idx = int(ckpt["count"])
+            all_embeddings = [saved[i] for i in range(saved.shape[0])]
+            print(f"  Resuming from checkpoint: {start_idx}/{len(inputs)} already embedded")
+        except Exception as e:
+            print(f"  Checkpoint load failed ({e}), starting fresh")
+            start_idx = 0
+            all_embeddings = []
+
     print(f"Embedding {len(inputs)} declarations in batches of {batch_size}")
 
     with httpx.Client(timeout=120.0) as client:
-        for batch_start in range(0, len(inputs), batch_size):
+        for batch_start in range(start_idx, len(inputs), batch_size):
             batch_end = min(batch_start + batch_size, len(inputs))
             batch = inputs[batch_start:batch_end]
 
             if batch_start % 1000 < batch_size:
-                print(f"  Progress: {batch_start}/{len(inputs)} ({100 * batch_start / len(inputs):.1f}%)")
+                pct = 100 * batch_start / len(inputs)
+                print(f"  Progress: {batch_start}/{len(inputs)} ({pct:.1f}%)")
 
-            # Retry loop
+            # Retry loop with exponential backoff
             for attempt in range(max_retries):
                 try:
                     resp = client.post(
@@ -207,21 +230,39 @@ def embed_declarations(declarations: list[dict]) -> np.ndarray:
                     batch_vecs = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
                     all_embeddings.extend([np.array(v, dtype=np.float32) for v in batch_vecs])
                     break  # success
-                except (httpx.HTTPError, KeyError, Exception) as e:
+                except Exception as e:
                     if attempt < max_retries - 1:
-                        wait = 2 ** (attempt + 1)
-                        print(f"  Retry {attempt + 1}/{max_retries} after error: {e}. Waiting {wait}s...")
+                        wait = 2 ** (attempt + 1) + 1
+                        print(f"  Retry {attempt + 1}/{max_retries} after error: {type(e).__name__}: {str(e)[:100]}. Waiting {wait}s...")
                         time.sleep(wait)
                     else:
-                        print(f"  FAILED after {max_retries} retries at batch {batch_start}: {e}")
+                        # Save checkpoint before dying
+                        print(f"  FAILED after {max_retries} retries at index {batch_start}. Saving checkpoint...")
+                        _save_checkpoint(all_embeddings, batch_start)
                         raise
 
+            # Save checkpoint periodically
+            if batch_end % checkpoint_interval < batch_size and all_embeddings:
+                _save_checkpoint(all_embeddings, batch_end)
+
             # Rate limit pause
-            time.sleep(0.5)
+            time.sleep(0.3)
+
+    # Clean up checkpoint on success
+    if CHECKPOINT_PATH.exists():
+        CHECKPOINT_PATH.unlink()
 
     embeddings = np.stack(all_embeddings)
     print(f"Embeddings shape: {embeddings.shape}")
     return embeddings
+
+
+def _save_checkpoint(embeddings: list[np.ndarray], count: int) -> None:
+    """Save embedding checkpoint so we can resume later."""
+    CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    arr = np.stack(embeddings) if embeddings else np.array([])
+    np.savez(str(CHECKPOINT_PATH), embeddings=arr, count=np.array(count))
+    print(f"  Checkpoint saved: {count} declarations embedded")
 
 
 def save_embeddings(embeddings: np.ndarray, declarations: list[dict]) -> None:
