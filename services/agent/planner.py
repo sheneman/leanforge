@@ -71,7 +71,10 @@ def _call_llm(system: str, user: str, model: str | None = None) -> str:
             },
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        msg = resp.json()["choices"][0]["message"]
+        # Some models (e.g. Nemotron) put output in reasoning_content with content=None
+        content = msg.get("content") or msg.get("reasoning_content") or ""
+        return content
 
 
 def _format_context_for_prompt(ctx: dict) -> str:

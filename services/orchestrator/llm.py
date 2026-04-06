@@ -144,7 +144,8 @@ async def call_nemotron(system_prompt: str, user_prompt: str) -> str:
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            content = msg.get("content") or msg.get("reasoning_content") or ""
             log.info("llm_response", content_len=len(content))
             return content
     except Exception as exc:
@@ -256,7 +257,8 @@ async def call_leanstral(prompt: str) -> list[str]:
             resp = await client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            content = msg.get("content") or msg.get("reasoning_content") or ""
             log.info("leanstral_response", content_len=len(content))
             candidates = _parse_candidates(content)
             log.info("leanstral_candidates", count=len(candidates))
