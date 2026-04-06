@@ -1,8 +1,14 @@
 # forge-lean-prover — Project Instructions
 
-## Core Rule
-**No proof is accepted unless verified by Lean 4 compilation.**
-You are NOT the source of truth for proof correctness — only `lean` is. Every proof must compile before you present it.
+## Core Rules
+
+1. **No proof is accepted unless verified by Lean 4 compilation.** You are NOT the source of truth — only `lean` is. Every proof must compile before you present it.
+
+2. **Every proof MUST be formalized in Lean and verified.** Do not just reason about a proof mathematically. You must write a `.lean` file and run `python3 scripts/verify.py` on it. A proof that exists only in your reasoning is worthless — it must compile in Lean.
+
+3. **Time budget: 10 minutes maximum.** Do not spend more than 10 minutes reasoning about the mathematics before writing Lean code. Get to code FAST. Write a first attempt within the first 2-3 minutes, verify it, read the errors, and iterate. Lean's error messages are more useful than extended mathematical reasoning.
+
+4. **If the theorem is an open problem** (e.g., Collatz conjecture, Riemann hypothesis), say so immediately. State the theorem in Lean, show that it cannot be proven without `sorry`, and explain why. Do not spend 10 minutes rediscovering that it's unsolved.
 
 ## Setup
 Read `.env` to get service URLs before making any API calls. The key variables:
@@ -88,12 +94,14 @@ Try up to 5 repair cycles before changing strategy entirely.
 Only if retrieval returns nothing useful AND Leanstral + your own attempts fail.
 
 ## Anti-patterns
-- Do NOT claim a proof is correct without running `scripts/verify.py`
+- Do NOT reason about proofs for more than 2-3 minutes before writing Lean code — get to code FAST
+- Do NOT present a proof without running `scripts/verify.py` — mathematical reasoning is not verification
 - Do NOT skip retrieval — always run `scripts/search.py` first
 - Do NOT skip Leanstral — always run `scripts/synthesize.py` before writing your own proof
 - Do NOT ignore error diagnostics — read them and fix specifically
 - Do NOT retry the same broken proof — change your approach or call Leanstral with error context
 - Do NOT use web search before trying retrieval + Leanstral
+- Do NOT end the session without having written and verified (or attempted to verify) a `.lean` file
 
 ## Example: Full Workflow
 
