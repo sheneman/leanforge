@@ -243,6 +243,12 @@ def run_turn(session_id: str) -> dict:
     if promising and best_source:
         db.update_session(session_id, best_partial_proof=best_source[:5000])
 
+    # Auto-extract lessons from repeated errors every 10 turns
+    if turn_number % 10 == 0:
+        new_lessons = db.auto_extract_lessons(session_id)
+        if new_lessons:
+            log.info("lessons_extracted", session_id=session_id, count=new_lessons)
+
     log.info(
         "turn_done",
         session_id=session_id,

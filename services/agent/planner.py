@@ -86,8 +86,14 @@ def _format_context_for_prompt(ctx: dict) -> str:
         f"\n## Total turns so far: {ctx['total_turns']}",
     ]
 
+    # Lessons go FIRST — these are hard facts the model must respect
+    if ctx.get("lessons"):
+        lines.append(f"\n## TECHNICAL LESSONS (ALWAYS apply these — do NOT repeat these mistakes)")
+        for lesson in ctx["lessons"]:
+            lines.append(f"  - {lesson}")
+
     if ctx["best_partial_proof"]:
-        lines.append(f"\n## Best partial proof so far\n{ctx['best_partial_proof']}")
+        lines.append(f"\n## Best partial proof so far\n{ctx['best_partial_proof'][:1000]}")
 
     if ctx["dead_ends"]:
         lines.append(f"\n## Dead ends (DO NOT retry these)")
@@ -108,8 +114,8 @@ def _format_context_for_prompt(ctx: dict) -> str:
 
     if ctx["lemmas_found"]:
         lines.append(f"\n## Useful lemmas found")
-        for l in ctx["lemmas_found"][:15]:
-            lines.append(f"  - {l['name']}: {l['statement'][:120]}")
+        for l in ctx["lemmas_found"]:
+            lines.append(f"  - {l['name']}: {l['statement']}")
 
     return "\n".join(lines)
 

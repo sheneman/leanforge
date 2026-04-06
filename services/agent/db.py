@@ -5,6 +5,7 @@ Collections:
     turns       — one doc per attempt (strategy, tactics, result, diagnostics)
     strategies  — deduplicated strategy descriptions with outcomes
     lemmas      — relevant lemmas discovered during search
+    lessons     — technical lessons learned (API facts, syntax rules, etc.)
 
 The agent queries these collections dynamically to build a focused LLM
 prompt without loading full history into context.
@@ -238,6 +239,84 @@ def get_lemmas(session_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Lessons — technical facts learned across turns
+# ---------------------------------------------------------------------------
+
+def lessons() -> Collection:
+    return _db()["lessons"]
+
+
+def log_lesson(session_id: str, lesson: str, category: str = "technical") -> None:
+    """Log a technical lesson (idempotent — deduplicates by text)."""
+    lessons().update_one(
+        {"session_id": session_id, "lesson": lesson},
+        {
+            "$set": {
+                "category": category,
+                "updated_at": datetime.now(timezone.utc),
+            },
+            "$inc": {"hit_count": 1},
+        },
+        upsert=True,
+    )
+
+
+def get_lessons(session_id: str) -> list[dict]:
+    return list(lessons().find({"session_id": session_id}).sort("hit_count", DESCENDING))
+
+
+def auto_extract_lessons(session_id: str) -> int:
+    """Scan recent turns for repeated diagnostics and auto-create lessons.
+
+    If the same diagnostic substring appears in 3+ different turns,
+    extract it as a lesson so the planner stops repeating the mistake.
+    Returns the number of new lessons created.
+    """
+    # Get all diagnostics from this session
+    pipeline = [
+        {"$match": {"session_id": session_id}},
+        {"$unwind": "$diagnostics"},
+        {"$group": {"_id": "$diagnostics", "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gte": 3}}},
+        {"$sort": {"count": DESCENDING}},
+        {"$limit": 20},
+    ]
+    repeated = list(turns().aggregate(pipeline))
+
+    # Known diagnostic patterns → lesson text
+    _LESSON_MAP = {
+        "unknown constant": "This constant/lemma does not exist in the current mathlib. Search for the correct name.",
+        "unknown identifier": "This identifier does not exist. Use scripts/search.py to find the correct name.",
+        "introN": "'introN' is NOT a valid Lean 4 tactic. Use 'intro a b c' (naming each variable).",
+        "iterate_succ_apply'": "Nat.iterate_succ_apply' does NOT exist. Use Function.iterate_succ_apply' or unfold Nat.iterate manually.",
+        "unexpected token": "Syntax error — check Lean 4 syntax. Common issues: missing 'by', wrong indentation, stale Lean 3 syntax.",
+    }
+
+    new_count = 0
+    for item in repeated:
+        diag = item["_id"]
+        if not isinstance(diag, str) or len(diag) < 10:
+            continue
+        # Check if this matches a known pattern
+        lesson_text = None
+        for pattern, text in _LESSON_MAP.items():
+            if pattern.lower() in diag.lower():
+                lesson_text = f"{text} (seen {item['count']}x: '{diag[:100]}')"
+                break
+        if not lesson_text:
+            # Generic lesson from repeated diagnostic
+            lesson_text = f"Repeated error ({item['count']}x): {diag[:150]}"
+
+        # Only log if not already a lesson
+        existing = lessons().find_one({"session_id": session_id, "lesson": {"$regex": diag[:50]}})
+        if not existing:
+            log_lesson(session_id, lesson_text, category="auto_extracted")
+            new_count += 1
+
+    return new_count
+
+
+# ---------------------------------------------------------------------------
 # Context builder — assemble a focused prompt from DB queries
 # ---------------------------------------------------------------------------
 
@@ -256,6 +335,7 @@ def build_context(session_id: str, max_recent: int = 5, max_promising: int = 5) 
     dead_ends = get_dead_ends(session_id)
     promising_strats = get_promising_strategies(session_id)
     found_lemmas = get_lemmas(session_id)
+    found_lessons = get_lessons(session_id)
     total_turns = get_turn_count(session_id)
 
     return {
@@ -266,14 +346,16 @@ def build_context(session_id: str, max_recent: int = 5, max_promising: int = 5) 
         "status": session["status"],
         "total_turns": total_turns,
         "best_partial_proof": session.get("best_partial_proof", ""),
+        "lessons": [
+            l["lesson"] for l in found_lessons[:20]
+        ],
         "recent_turns": [
             {
                 "turn": t["turn"],
                 "strategy": t["strategy"],
                 "result": t["result"],
-                "diagnostics": t["diagnostics"][:3],  # truncate
+                "diagnostics": t["diagnostics"][:2],
                 "promising": t["promising"],
-                "notes": t.get("notes", ""),
             }
             for t in recent
         ],
@@ -281,19 +363,17 @@ def build_context(session_id: str, max_recent: int = 5, max_promising: int = 5) 
             {
                 "turn": t["turn"],
                 "strategy": t["strategy"],
-                "result": t["result"],
-                "notes": t.get("notes", ""),
-                "subgoals_remaining": t.get("subgoals_remaining", []),
+                "notes": t.get("notes", "")[:100],
             }
             for t in promising
         ],
-        "dead_ends": dead_ends[:20],  # cap at 20
+        "dead_ends": dead_ends[:15],
         "promising_strategies": [
-            {"name": s["name"], "description": s["description"]}
-            for s in promising_strats
+            {"name": s["name"], "description": s["description"][:100]}
+            for s in promising_strats[:10]  # cap at 10 most recent
         ],
         "lemmas_found": [
-            {"name": l["name"], "statement": l["statement"][:200]}
-            for l in found_lemmas[:30]  # cap at 30
+            {"name": l["name"], "statement": l["statement"][:150]}
+            for l in found_lemmas[:15]
         ],
     }
