@@ -1,55 +1,35 @@
 # Skill: lean-retrieve
 
 ## Purpose
-Searches the local theorem corpus, mathlib index, project-specific theorems, and prior successful proof traces to find relevant lemmas, theorems, and definitions. This provides the grounding context that synthesis needs to produce correct proofs.
+Semantic search over 214K+ mathlib declarations. Finds relevant lemmas, theorems, and definitions by meaning, not just keyword matching.
 
 ## When to Use
-- **FIRST step** before any proof synthesis attempt. Always retrieve before you synthesize.
-- When the user asks "what lemmas are related to X?"
-- When a proof attempt fails with `unknown_identifier` and you need to find the correct name.
-- To look up a mathlib theorem by informal description.
-- To find prior proof traces for similar goals.
+- **FIRST step** before any proof attempt — always retrieve before you synthesize
+- When you need to find the correct mathlib lemma name
+- When a proof fails with `unknown_identifier`
+- When you want to know what's available in mathlib for a topic
 
-## Inputs
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `query` | string | yes | Natural language description or theorem pattern to search for (e.g., `"commutativity of addition on natural numbers"` or `"Nat.add_comm"`). |
-| `top_k` | int | no | Maximum number of results to return. Default: 10. |
-| `sources` | list[enum] | no | Filter to specific sources: `mathlib`, `project`, `traces`. Default: all. |
-| `type_filter` | string | no | Filter by type signature pattern (e.g., `"Nat -> Nat -> Prop"`). |
-
-## Outputs
-| Field | Type | Description |
-|-------|------|-------------|
-| `results` | list[object] | Ranked list of matches, each containing: |
-| `results[].name` | string | Fully qualified theorem/lemma name. |
-| `results[].statement` | string | Full Lean type signature / statement. |
-| `results[].source` | enum | Where this result came from: `mathlib`, `project`, `traces`. |
-| `results[].score` | float | Relevance score (0.0 to 1.0). |
-| `results[].module` | string | The Lean module path (e.g., `Mathlib.Algebra.Group.Basic`). |
-| `results[].doc` | string | Docstring if available. |
-
-## Service Endpoint
-- **URL:** `${RETRIEVAL_URL}`
-- **Service:** retrieval
-- **Key endpoints:**
-  - `POST /search` -- semantic search over the corpus.
-  - `POST /search/by_type` -- search filtered by type signature.
-  - `GET /index/status` -- check whether the index is loaded and ready.
-
-## Example Usage
-```
-Use lean-retrieve to find lemmas related to:
-
-"If a list is non-empty, then its head exists"
-
-Expected: results like List.head?, List.head_cons, List.ne_nil_iff, etc.
+## How to Use
+Read `RETRIEVAL_URL` from `.env`, then:
+```bash
+curl -s -X POST ${RETRIEVAL_URL}/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "sum of two even numbers is even", "top_k": 10}'
 ```
 
-## Notes
-- **Always call lean-retrieve before synthesizing a proof.** Retrieval-augmented synthesis dramatically outperforms ungrounded generation.
-- If retrieval returns fewer than 3 results with score > 0.5, consider rephrasing the query or broadening the search.
-- If retrieval is insufficient even after rephrasing, then (and only then) consider using the **web-search** skill as a fallback.
-- The retrieval index must be loaded before queries work. Check `/index/status` if you get empty results unexpectedly.
-- Results from `traces` source are prior successful proofs from this project and are especially valuable for recurring patterns.
-- The `type_filter` is matched structurally, not syntactically, so minor formatting differences are tolerated.
+Use natural language queries — the search is semantic (vector similarity), not keyword-based. Examples:
+- `"continuous function on compact set is bounded"` → finds `IsCompact.exists_bound_of_continuousOn'`
+- `"prime number greater than one"` → finds `Nat.Prime.one_lt`
+- `"list reverse is involution"` → finds `List.reverse_reverse`
+
+## Reading the Response
+Results are ranked by relevance score. Each result has:
+- `name` — the Lean declaration name (e.g., `Even.add`)
+- `statement` — the full type signature
+- `module` — which mathlib module it's in
+- `score` — relevance (higher is better)
+
+## Tips
+- If results are poor, try rephrasing: use mathlib terminology, mention type names
+- If you get fewer than 3 good results, try a broader query
+- If retrieval is insufficient after rephrasing, use web-search as fallback
