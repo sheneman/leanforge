@@ -157,10 +157,36 @@ async def call_nemotron(system_prompt: str, user_prompt: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _parse_candidates(raw: str) -> list[str]:
-    """Extract multiple candidate proof bodies from a synthesis response."""
-    raw = re.sub(r"```lean4?\s*", "", raw)
-    raw = re.sub(r"```", "", raw)
+    """Extract multiple candidate proof bodies from a synthesis response.
 
+    Handles various LLM output formats: code fences (```lean4, ```tactics,
+    ```proof, etc.), full file content (strips imports + theorem declaration),
+    numbered lists, and separator-delimited candidates.
+    """
+    # Strip ALL code fences regardless of label
+    raw = re.sub(r"```\w*\s*", "", raw)
+
+    # If the response contains a full theorem declaration, extract just the proof body
+    # Pattern: ... := by\n  <tactics>
+    by_match = re.search(r":=\s*by\s*\n([\s\S]+)", raw)
+    if by_match:
+        raw = by_match.group(1)
+
+    # Strip import lines and open statements that Leanstral sometimes includes
+    lines = raw.split("\n")
+    filtered: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("import ") or stripped.startswith("open "):
+            continue
+        if re.match(r"^(theorem|lemma|def|example)\s", stripped):
+            continue
+        if stripped.startswith("#"):  # directives like #check
+            continue
+        filtered.append(line)
+    raw = "\n".join(filtered).strip()
+
+    # Split into multiple candidates
     if "\n---" in raw:
         parts = raw.split("\n---")
     elif re.search(r"^\d+\.\s", raw, re.MULTILINE):
@@ -173,8 +199,11 @@ def _parse_candidates(raw: str) -> list[str]:
     candidates: list[str] = []
     for part in parts:
         cleaned = part.strip()
-        if cleaned.lower().startswith("by"):
+        # Strip leading "by" keyword (we add it ourselves in _build_lean_source)
+        if cleaned.lower().startswith("by\n") or cleaned.lower().startswith("by "):
             cleaned = cleaned[2:].strip()
+        elif cleaned.lower() == "by":
+            continue
         if cleaned and cleaned not in candidates:
             candidates.append(cleaned)
 
