@@ -67,7 +67,7 @@ def _call_llm(system: str, user: str, model: str | None = None) -> str:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "max_tokens": 2048,
+                "max_tokens": 4096,
                 "temperature": 0.4,
             },
         )
@@ -131,13 +131,21 @@ def plan_next_step(session_id: str) -> dict:
     raw = _call_llm(PLANNER_SYSTEM_PROMPT, prompt, model=PLANNER_MODEL)
     log.info("planner_response", session_id=session_id, response_len=len(raw))
 
-    # Parse JSON from response (strip markdown fences if present)
+    # Parse JSON from response — handle thinking tags, code fences, truncation
     raw = raw.strip()
+    # Strip <think>...</think> blocks from thinking models
+    import re as _re
+    raw = _re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
+    # Strip code fences
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
     if raw.endswith("```"):
         raw = raw[: raw.rfind("```")]
     raw = raw.strip()
+    # Try to find JSON object even if there's surrounding text
+    json_match = _re.search(r"\{[\s\S]*\}", raw)
+    if json_match:
+        raw = json_match.group(0)
 
     try:
         plan = json.loads(raw)
