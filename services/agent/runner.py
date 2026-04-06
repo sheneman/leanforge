@@ -40,11 +40,12 @@ log = structlog.get_logger()
 
 LEAN_ENV_URL = os.getenv("LEAN_ENV_URL", "http://leanforge-lean-env:8101").rstrip("/")
 RETRIEVAL_URL = os.getenv("RETRIEVAL_URL", "http://leanforge-retrieval:8103").rstrip("/")
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
 TURN_DELAY_SECS = int(os.getenv("TURN_DELAY_SECS", "5"))
 
 
 # ---------------------------------------------------------------------------
-# Tool calls (search, verify)
+# Tool calls (search, verify, web search)
 # ---------------------------------------------------------------------------
 
 def search_mathlib(query: str, top_k: int = 10) -> list[dict]:
@@ -59,6 +60,36 @@ def search_mathlib(query: str, top_k: int = 10) -> list[dict]:
             return resp.json().get("results", [])
     except Exception as e:
         log.warning("search_failed", error=str(e))
+        return []
+
+
+def web_search(query: str, count: int = 5) -> list[dict]:
+    """Search the web via Brave Search API. Used as last resort for research."""
+    if not BRAVE_API_KEY:
+        log.warning("web_search_skipped", reason="no BRAVE_API_KEY")
+        return []
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": count},
+                headers={
+                    "Accept": "application/json",
+                    "X-Subscription-Token": BRAVE_API_KEY,
+                },
+            )
+            resp.raise_for_status()
+            results = resp.json().get("web", {}).get("results", [])
+            return [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "description": r.get("description", "")[:300],
+                }
+                for r in results[:count]
+            ]
+    except Exception as e:
+        log.warning("web_search_failed", error=str(e))
         return []
 
 
@@ -152,9 +183,27 @@ def run_turn(session_id: str) -> dict:
             db.log_lemma(session_id, r["name"], r.get("statement", ""), r.get("module", ""))
             all_lemmas.append(r)
 
+    # 2b. Web search (if planner requested it — last resort for research)
+    web_results = []
+    for query in plan.get("web_search_queries", [])[:2]:
+        results = web_search(query, count=3)
+        web_results.extend(results)
+        log.info("web_search", session_id=session_id, query=query, results=len(results))
+    # Log useful web findings as lessons
+    for wr in web_results[:3]:
+        db.log_lesson(
+            session_id,
+            f"Web research: {wr['title'][:100]} — {wr['description'][:150]}",
+            category="web_research",
+        )
+
     # 3. Synthesize tactics
-    # Use Leanstral with plan hints + search results
+    # Use Leanstral with plan hints + search results + web context
     hints = plan.get("strategy_description", "")
+    if web_results:
+        hints += "\nWeb research findings:\n" + "\n".join(
+            f"  {wr['title'][:80]}: {wr['description'][:150]}" for wr in web_results[:3]
+        )
     if all_lemmas:
         hints += "\nRelevant lemmas:\n" + "\n".join(
             f"  {l['name']}: {l.get('statement', '')[:150]}" for l in all_lemmas[:10]
