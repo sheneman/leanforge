@@ -85,3 +85,4 @@ logs/
 *.log
 tmp/
 .pids
+.mcp.json
