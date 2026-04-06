@@ -20,7 +20,7 @@ log = structlog.get_logger()
 LLM_API_BASE = os.getenv("LLM_API_BASE", "").rstrip("/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_API_MODEL = os.getenv("LLM_API_MODEL", "")
-PLANNER_MODEL = os.getenv("PLANNER_MODEL", "Qwen/Qwen3-32B")
+PLANNER_MODEL = os.getenv("PLANNER_MODEL", "qwen/qwen3.5-122b")
 LEANSTRAL_API_MODEL = os.getenv("LEANSTRAL_API_MODEL", "")
 
 PLANNER_SYSTEM_PROMPT = """\
