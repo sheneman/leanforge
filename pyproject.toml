@@ -18,6 +18,7 @@ dependencies = [
   "aiofiles",
   "python-dotenv",
   "structlog",
+  "pymongo",
 ]
 
 [project.optional-dependencies]
