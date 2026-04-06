@@ -16,7 +16,12 @@ import sys
 import time
 from pathlib import Path
 
+import os
+
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Benchmark theorems
@@ -136,7 +141,7 @@ def save_results(results: list[dict]) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run forge-lean-prover benchmarks")
-    parser.add_argument("--url", default="http://localhost:8100", help="Orchestrator base URL")
+    parser.add_argument("--url", default=os.getenv("ORCHESTRATOR_URL", "http://localhost:8100"), help="Orchestrator base URL")
     parser.add_argument("--timeout", type=float, default=120.0, help="Per-theorem timeout in seconds")
     args = parser.parse_args()
 

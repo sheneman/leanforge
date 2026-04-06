@@ -3,7 +3,7 @@
 ## Purpose
 Main entry point for the LeanForge proving pipeline. Receives a theorem statement and orchestrates the full prove loop: retrieve relevant lemmas, synthesize proof candidates, verify each candidate against the Lean compiler, and repair failures until a valid proof is found or retries are exhausted.
 
-**CRITICAL: The orchestrator MUST call lean_env (localhost:8101) to verify every candidate proof. No proof may be presented to the user unless lean_env returns `is_verified: true`. The LLM's belief that a proof is correct is irrelevant — only Lean compilation counts.**
+**CRITICAL: The orchestrator MUST call lean_env (${LEAN_ENV_URL}) to verify every candidate proof. No proof may be presented to the user unless lean_env returns `is_verified: true`. The LLM's belief that a proof is correct is irrelevant — only Lean compilation counts.**
 
 ## When to Use
 - A user asks to prove a Lean theorem or lemma.
@@ -13,15 +13,15 @@ Main entry point for the LeanForge proving pipeline. Receives a theorem statemen
 ## Required Steps (mandatory, in order)
 Every invocation of the orchestrator MUST execute these steps in sequence. Skipping any step is a protocol violation.
 
-1. **Retrieve** — Call lean-retrieve (POST localhost:8103/search) with the theorem statement to find relevant lemmas from mathlib and the local corpus. This grounds synthesis in known results and prevents hallucinated lemma names.
+1. **Retrieve** — Call lean-retrieve (POST ${RETRIEVAL_URL}/search) with the theorem statement to find relevant lemmas from mathlib and the local corpus. This grounds synthesis in known results and prevents hallucinated lemma names.
 
 2. **Synthesize** — Submit a task to the orchestrator service:
-   - `POST localhost:8100/tasks` to create the task
-   - `POST localhost:8100/tasks/{id}/run` to execute the full pipeline
+   - `POST ${ORCHESTRATOR_URL}/tasks` to create the task
+   - `POST ${ORCHESTRATOR_URL}/tasks/{id}/run` to execute the full pipeline
    The synthesis service (Leanstral) generates candidate proofs using the retrieved context. Do NOT skip this and write proofs from LLM reasoning alone.
 
 3. **Verify** — Send EVERY candidate proof to lean_env for compilation:
-   - `POST localhost:8101/verify` with the full Lean source (including imports)
+   - `POST ${LEAN_ENV_URL}/verify` with the full Lean source (including imports)
    - Check the response: `is_verified: true` means the proof compiles. Any other result means it does NOT.
    - **A proof that has not been through this step is NOT verified, regardless of how confident the LLM is.**
 
@@ -46,7 +46,7 @@ Every invocation of the orchestrator MUST execute these steps in sequence. Skipp
 | `diagnostics` | list[object] | Final compiler diagnostics if the proof did not verify. |
 
 ## Service Endpoint
-- **URL:** `http://localhost:8100`
+- **URL:** `${ORCHESTRATOR_URL}`
 - **Service:** orchestrator
 - **Key endpoints:**
   - `POST /tasks` -- create a new prove task.
@@ -83,4 +83,4 @@ The orchestrator will:
 - The retrieve step runs first to ground synthesis in known lemmas. Do not skip retrieval.
 - Each repair iteration feeds the previous error diagnostics back into synthesis, so the trace grows monotonically.
 - Timeout for the entire pipeline defaults to 120 seconds; individual verification calls have their own 30-second timeout.
-- If the orchestrator service at localhost:8100 is unreachable, report the connection error immediately rather than retrying silently.
+- If the orchestrator service at ${ORCHESTRATOR_URL} is unreachable, report the connection error immediately rather than retrying silently.

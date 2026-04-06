@@ -15,18 +15,23 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
+import os
+
 import httpx
 import pytest
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — reads from .env, falls back to localhost
 # ---------------------------------------------------------------------------
 SERVICES: dict[str, str] = {
-    "orchestrator": "http://localhost:8100",
-    "lean_env": "http://localhost:8101",
-    "proof_search": "http://localhost:8102",
-    "retrieval": "http://localhost:8103",
-    "telemetry": "http://localhost:8104",
+    "orchestrator": os.getenv("ORCHESTRATOR_URL", "http://localhost:8100"),
+    "lean_env": os.getenv("LEAN_ENV_URL", "http://localhost:8101"),
+    "proof_search": os.getenv("PROOF_SEARCH_URL", "http://localhost:8102"),
+    "retrieval": os.getenv("RETRIEVAL_URL", "http://localhost:8103"),
+    "telemetry": os.getenv("TELEMETRY_URL", "http://localhost:8104"),
 }
 
 TIMEOUT = 30.0  # seconds per request

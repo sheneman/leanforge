@@ -30,7 +30,7 @@ Runs benchmark theorems from the `lean/ForgeLean/Bench/` directory through the f
 | `failure_analysis` | object | Breakdown of failures by category with counts and example theorems. |
 
 ## Service Endpoint
-- **URL:** `http://localhost:8100`
+- **URL:** `${ORCHESTRATOR_URL}`
 - **Service:** orchestrator
 - **Key endpoints:**
   - `POST /benchmark/run` -- start a benchmark run.

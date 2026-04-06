@@ -29,7 +29,7 @@ Manages interactive Lean 4 proof sessions backed by Pantograph. Allows creating 
 | `snapshot_id` | string | Identifier for a saved snapshot (returned on snapshot). |
 
 ## Service Endpoint
-- **URL:** `http://localhost:8101`
+- **URL:** `${LEAN_ENV_URL}`
 - **Service:** lean_env (Pantograph interface)
 - **Key endpoints:**
   - `POST /session/create` -- open a new proof session.

@@ -33,7 +33,7 @@ Compiles a Lean 4 snippet or file against the project environment and returns a 
 - **Failure:** Any other combination. Read the `diagnostics` array for error details, then feed them into lean-repair or fix manually, and call lean-verify again.
 
 ## Service Endpoint
-- **URL:** `http://localhost:8101`
+- **URL:** `${LEAN_ENV_URL}`
 - **Service:** lean_env
 - **Key endpoints:**
   - `POST /verify` -- compile source and return diagnostics.
@@ -42,7 +42,7 @@ Compiles a Lean 4 snippet or file against the project environment and returns a 
 ## Example: Verify via curl
 ```bash
 # Verify a proof snippet
-curl -X POST http://localhost:8101/verify \
+curl -X POST ${LEAN_ENV_URL}/verify \
   -H "Content-Type: application/json" \
   -d '{
     "source": "import Mathlib.Tactic\n\ntheorem test : 1 + 1 = 2 := by norm_num"
@@ -104,4 +104,4 @@ theorem double_neg (p : Prop) [Decidable p] : ~~p -> p := by
 - The diagnostic `category` field maps to the `status` enum: use it to decide whether to invoke lean-repair or lean-search.
 - `timeout` status means the Lean server did not finish within the allotted time. Consider simplifying the proof or increasing the timeout.
 - This skill does NOT modify any files. It is read-only / compile-only.
-- If the lean_env service at localhost:8101 is unreachable, surface the connection error.
+- If the lean_env service at ${LEAN_ENV_URL} is unreachable, surface the connection error.

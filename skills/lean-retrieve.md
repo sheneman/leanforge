@@ -30,7 +30,7 @@ Searches the local theorem corpus, mathlib index, project-specific theorems, and
 | `results[].doc` | string | Docstring if available. |
 
 ## Service Endpoint
-- **URL:** `http://localhost:8103`
+- **URL:** `${RETRIEVAL_URL}`
 - **Service:** retrieval
 - **Key endpoints:**
   - `POST /search` -- semantic search over the corpus.

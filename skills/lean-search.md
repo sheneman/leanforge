@@ -31,7 +31,7 @@ Performs branch-and-bound search over the proof state space. Manages a search tr
 | `stats` | object | Search statistics: `branches_explored`, `branches_pruned`, `elapsed_ms`. |
 
 ## Service Endpoint
-- **URL:** `http://localhost:8102`
+- **URL:** `${PROOF_SEARCH_URL}`
 - **Service:** proof_search
 - **Key endpoints:**
   - `POST /search/create` -- start a new search task.

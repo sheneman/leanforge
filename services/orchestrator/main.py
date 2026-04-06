@@ -35,10 +35,10 @@ load_dotenv()
 
 log = structlog.get_logger()
 
-RETRIEVAL_URL = os.getenv("RETRIEVAL_URL", "http://localhost:8103")
-LEAN_ENV_URL = os.getenv("LEAN_ENV_URL", "http://localhost:8101")
-PROOF_SEARCH_URL = os.getenv("PROOF_SEARCH_URL", "http://localhost:8102")
-TELEMETRY_URL = os.getenv("TELEMETRY_URL", "http://localhost:8104")
+RETRIEVAL_URL = os.getenv("RETRIEVAL_URL", "http://leanforge-retrieval:8103")
+LEAN_ENV_URL = os.getenv("LEAN_ENV_URL", "http://leanforge-lean-env:8101")
+PROOF_SEARCH_URL = os.getenv("PROOF_SEARCH_URL", "http://leanforge-proof-search:8102")
+TELEMETRY_URL = os.getenv("TELEMETRY_URL", "http://leanforge-telemetry:8104")
 
 # ---------------------------------------------------------------------------
 # Load configuration at startup

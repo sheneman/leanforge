@@ -7,7 +7,7 @@ FALLBACK ONLY. Uses Brave Search MCP to find theorem names, current mathlib docu
 **NEVER use this skill as the first step. It is gated behind lean-retrieve.**
 
 Before calling web-search, ALL of the following must be true:
-1. You have already called lean-retrieve (POST localhost:8103/search) with at least one query.
+1. You have already called lean-retrieve (POST ${RETRIEVAL_URL}/search) with at least one query.
 2. lean-retrieve returned fewer than 3 results with score > 0.5, OR returned no results at all.
 3. You have a specific information gap that local retrieval cannot fill.
 

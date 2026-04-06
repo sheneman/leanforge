@@ -30,7 +30,7 @@ Takes a failed proof attempt along with its compiler diagnostics and original go
 | `best` | object | The best candidate (verified if any are, otherwise fewest remaining errors). |
 
 ## Service Endpoint
-- **URL:** `http://localhost:8100` (orchestrator) and `http://localhost:8101` (lean_env)
+- **URL:** `${ORCHESTRATOR_URL}` (orchestrator) and `${LEAN_ENV_URL}` (lean_env)
 - **Service:** orchestrator + lean_env loop
 - **Key endpoints:**
   - `POST /repair` on orchestrator -- submit a repair request.
