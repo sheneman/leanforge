@@ -84,3 +84,4 @@ docker-compose.override.yml
 logs/
 *.log
 tmp/
+.pids
