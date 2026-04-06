@@ -20,6 +20,7 @@ log = structlog.get_logger()
 LLM_API_BASE = os.getenv("LLM_API_BASE", "").rstrip("/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_API_MODEL = os.getenv("LLM_API_MODEL", "")
+PLANNER_MODEL = os.getenv("PLANNER_MODEL", "Qwen/Qwen3-32B")
 LEANSTRAL_API_MODEL = os.getenv("LEANSTRAL_API_MODEL", "")
 
 PLANNER_SYSTEM_PROMPT = """\
@@ -127,7 +128,7 @@ def plan_next_step(session_id: str) -> dict:
     prompt = _format_context_for_prompt(ctx)
     log.info("planner_prompt", session_id=session_id, prompt_len=len(prompt))
 
-    raw = _call_llm(PLANNER_SYSTEM_PROMPT, prompt)
+    raw = _call_llm(PLANNER_SYSTEM_PROMPT, prompt, model=PLANNER_MODEL)
     log.info("planner_response", session_id=session_id, response_len=len(raw))
 
     # Parse JSON from response (strip markdown fences if present)
