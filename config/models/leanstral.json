@@ -1,10 +1,7 @@
 {
   "model_id": "leanstral:119b",
-  "provider": "mindrouter",
-  "api_base_env": "LEANSTRAL_API_BASE",
-  "api_key_env": "LEANSTRAL_API_KEY",
   "max_tokens": 2048,
   "temperature": 0.6,
   "top_p": 0.95,
-  "notes": "Leanstral is a Lean 4 proof-synthesis model. Configure api_base to point to your Leanstral endpoint."
+  "notes": "Proof synthesis model. Override with LEANSTRAL_API_MODEL env var."
 }

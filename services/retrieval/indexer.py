@@ -174,12 +174,12 @@ def embed_declarations(declarations: list[dict]) -> np.ndarray:
     Saves checkpoints every 5000 declarations so embedding can resume
     after failures (502s, rate limits, etc).
     """
-    api_key = os.environ.get("NEMOTRON_API_KEY", "")
+    api_key = os.environ.get("LLM_API_KEY", "")
     if not api_key:
-        print("ERROR: NEMOTRON_API_KEY environment variable not set")
+        print("ERROR: LLM_API_KEY environment variable not set")
         sys.exit(1)
 
-    api_base = os.environ.get("NEMOTRON_API_BASE", "https://mindrouter.uidaho.edu/v1")
+    api_base = os.environ.get("LLM_API_BASE", "").rstrip("/")
     url = f"{api_base}/embeddings"
 
     batch_size = 64

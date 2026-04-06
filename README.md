@@ -97,8 +97,10 @@ All configuration is managed through environment variables. Copy `.env.example` 
 | `INDEX_PATH` | `data/corpus/index.faiss` | Path to the FAISS vector index file. |
 | `TELEMETRY_LOG_DIR` | `data/logs` | Directory for telemetry event logs. |
 | `TELEMETRY_FLUSH_THRESHOLD` | `1000` | Number of events buffered before auto-flush. |
-| `NEMOTRON_API_KEY` | `""` | API key for the Nemotron model endpoint (future). |
-| `LEANSTRAL_API_KEY` | `""` | API key for the Leanstral model endpoint (future). |
+| `LLM_API_KEY` | `""` | API key for the LLM provider (OpenAI-compatible). |
+| `LLM_API_BASE` | `""` | Base URL for the LLM provider (e.g. `https://api.openai.com/v1`). |
+| `LLM_API_MODEL` | `""` | Model ID for the orchestrator planner. |
+| `LEANSTRAL_API_MODEL` | `""` | Model ID for proof synthesis. |
 | `BRAVE_API_KEY` | `""` | API key for Brave Search MCP fallback. |
 
 ## Services

@@ -29,8 +29,8 @@ log = structlog.get_logger()
 
 INDEX_PATH = os.getenv("INDEX_PATH", "data/vectors/index.faiss")
 METADATA_PATH = os.getenv("METADATA_PATH", "data/vectors/metadata.jsonl")
-NEMOTRON_API_KEY = os.environ.get("NEMOTRON_API_KEY", "")
-NEMOTRON_API_BASE = os.environ.get("NEMOTRON_API_BASE", "https://mindrouter.uidaho.edu/v1")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_API_BASE = os.environ.get("LLM_API_BASE", "").rstrip("/")
 
 app = FastAPI(title="Retrieval Service", version="0.1.0")
 
@@ -323,16 +323,16 @@ class VectorIndex:
 
     def _embed_query(self, query: str) -> np.ndarray | None:
         """Embed a single query string via mindrouter."""
-        if not NEMOTRON_API_KEY:
+        if not LLM_API_KEY:
             log.warning("no_api_key_for_embedding")
             return None
 
-        url = f"{NEMOTRON_API_BASE}/embeddings"
+        url = f"{LLM_API_BASE}/embeddings"
         try:
             client = self._get_http_client()
             resp = client.post(
                 url,
-                headers={"Authorization": f"Bearer {NEMOTRON_API_KEY}"},
+                headers={"Authorization": f"Bearer {LLM_API_KEY}"},
                 json={"model": "Qwen/Qwen3-Embedding-8B", "input": [query]},
             )
             resp.raise_for_status()

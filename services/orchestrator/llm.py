@@ -1,7 +1,14 @@
 """LLM client abstraction for the orchestrator.
 
-Provides async helpers to call Nemotron (orchestrator planning) and
-Leanstral (proof synthesis) via OpenAI-compatible chat-completion endpoints.
+Provides async helpers to call an orchestrator LLM (planning) and
+a proof-synthesis LLM (Leanstral) via OpenAI-compatible chat-completion
+endpoints. Provider-agnostic — configure via environment variables.
+
+Environment variables:
+    LLM_API_KEY         API key for the LLM provider
+    LLM_API_BASE        Base URL (e.g. https://api.openai.com/v1)
+    LLM_API_MODEL       Model ID for the orchestrator planner
+    LEANSTRAL_API_MODEL Model ID for proof synthesis
 """
 from __future__ import annotations
 
@@ -17,10 +24,10 @@ import structlog
 log = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
-# Paths to model config files (relative to repo root)
+# Paths to model config files (optional overrides)
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_NEMOTRON_CFG_PATH = _REPO_ROOT / "config" / "models" / "nemotron.json"
+_LLM_CFG_PATH = _REPO_ROOT / "config" / "models" / "nemotron.json"
 _LEANSTRAL_CFG_PATH = _REPO_ROOT / "config" / "models" / "leanstral.json"
 
 
@@ -33,7 +40,7 @@ def _load_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-_nemotron_cfg: dict[str, Any] = _load_json(_NEMOTRON_CFG_PATH)
+_llm_cfg: dict[str, Any] = _load_json(_LLM_CFG_PATH)
 _leanstral_cfg: dict[str, Any] = _load_json(_LEANSTRAL_CFG_PATH)
 
 
@@ -41,20 +48,36 @@ _leanstral_cfg: dict[str, Any] = _load_json(_LEANSTRAL_CFG_PATH)
 # Configuration helpers
 # ---------------------------------------------------------------------------
 
-def nemotron_is_configured() -> bool:
-    """Return True if the Nemotron API key and base URL are set."""
-    return bool(
-        os.getenv("NEMOTRON_API_KEY", "")
-        and os.getenv("NEMOTRON_API_BASE", "")
-    )
+def _get_api_key() -> str:
+    return os.getenv("LLM_API_KEY", "")
+
+
+def _get_api_base() -> str:
+    return os.getenv("LLM_API_BASE", "").rstrip("/")
+
+
+def _get_llm_model() -> str:
+    """Orchestrator planner model. Env var takes precedence over config file."""
+    return os.getenv("LLM_API_MODEL", _llm_cfg.get("model_id", ""))
+
+
+def _get_leanstral_model() -> str:
+    """Proof synthesis model. Env var takes precedence over config file."""
+    return os.getenv("LEANSTRAL_API_MODEL", _leanstral_cfg.get("model_id", ""))
+
+
+def llm_is_configured() -> bool:
+    """Return True if the LLM API key, base URL, and orchestrator model are set."""
+    return bool(_get_api_key() and _get_api_base() and _get_llm_model())
 
 
 def leanstral_is_configured() -> bool:
-    """Return True if the Leanstral API key and base URL are set."""
-    return bool(
-        os.getenv("LEANSTRAL_API_KEY", "")
-        and os.getenv("LEANSTRAL_API_BASE", "")
-    )
+    """Return True if the LLM API key, base URL, and synthesis model are set."""
+    return bool(_get_api_key() and _get_api_base() and _get_leanstral_model())
+
+
+# Keep old names as aliases for backward compatibility in orchestrator/main.py
+nemotron_is_configured = llm_is_configured
 
 
 # ---------------------------------------------------------------------------
@@ -79,24 +102,24 @@ _DEFAULT_LEANSTRAL_TACTICS: list[str] = [
 
 
 # ---------------------------------------------------------------------------
-# Nemotron (orchestrator planner)
+# Orchestrator planner LLM
 # ---------------------------------------------------------------------------
 
 async def call_nemotron(system_prompt: str, user_prompt: str) -> str:
-    """Call the Nemotron orchestrator LLM and return the generated text.
+    """Call the orchestrator planner LLM and return the generated text.
 
     If the API is not configured, returns a sensible default JSON plan.
     """
-    if not nemotron_is_configured():
-        log.info("nemotron_not_configured, returning default plan")
+    if not llm_is_configured():
+        log.info("llm_not_configured, returning default plan")
         return _DEFAULT_NEMOTRON_PLAN
 
-    api_key = os.environ["NEMOTRON_API_KEY"]
-    api_base = os.environ["NEMOTRON_API_BASE"].rstrip("/")
-    model_id = _nemotron_cfg.get("model_id", "nvidia/llama-3.3-nemotron-super-49b-v1")
-    max_tokens = _nemotron_cfg.get("max_tokens", 4096)
-    temperature = _nemotron_cfg.get("temperature", 0.3)
-    top_p = _nemotron_cfg.get("top_p", 0.95)
+    api_key = _get_api_key()
+    api_base = _get_api_base()
+    model_id = _get_llm_model()
+    max_tokens = _llm_cfg.get("max_tokens", 4096)
+    temperature = _llm_cfg.get("temperature", 0.3)
+    top_p = _llm_cfg.get("top_p", 0.95)
 
     url = f"{api_base}/chat/completions"
     headers = {
@@ -114,12 +137,7 @@ async def call_nemotron(system_prompt: str, user_prompt: str) -> str:
         "top_p": top_p,
     }
 
-    log.info(
-        "nemotron_request",
-        url=url,
-        model=model_id,
-        user_prompt_len=len(user_prompt),
-    )
+    log.info("llm_request", url=url, model=model_id, user_prompt_len=len(user_prompt))
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -127,45 +145,33 @@ async def call_nemotron(system_prompt: str, user_prompt: str) -> str:
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
-            log.info("nemotron_response", content_len=len(content))
+            log.info("llm_response", content_len=len(content))
             return content
     except Exception as exc:
-        log.error("nemotron_call_failed", error=str(exc))
+        log.error("llm_call_failed", error=str(exc))
         return _DEFAULT_NEMOTRON_PLAN
 
 
 # ---------------------------------------------------------------------------
-# Leanstral (proof synthesis)
+# Proof synthesis LLM (Leanstral or any Lean-capable model)
 # ---------------------------------------------------------------------------
 
 def _parse_candidates(raw: str) -> list[str]:
-    """Extract multiple candidate proof bodies from a Leanstral response.
-
-    The model may return proofs separated by ``---``, numbered lists, or
-    markdown code fences. We split on common delimiters and return unique,
-    non-empty candidates.
-    """
-    # Strip markdown code fences
+    """Extract multiple candidate proof bodies from a synthesis response."""
     raw = re.sub(r"```lean4?\s*", "", raw)
     raw = re.sub(r"```", "", raw)
 
-    # Try splitting on common delimiters
-    # 1. Triple-dash separator
     if "\n---" in raw:
         parts = raw.split("\n---")
-    # 2. Numbered candidates like "1." "2." at line start
     elif re.search(r"^\d+\.\s", raw, re.MULTILINE):
         parts = re.split(r"^\d+\.\s", raw, flags=re.MULTILINE)
-    # 3. "-- candidate" or "-- proof" headers
     elif re.search(r"^--\s*(candidate|proof|option)", raw, re.MULTILINE | re.IGNORECASE):
         parts = re.split(r"^--\s*(candidate|proof|option)\s*\d*\s*", raw, flags=re.MULTILINE | re.IGNORECASE)
     else:
-        # Treat the whole response as a single candidate
         parts = [raw]
 
     candidates: list[str] = []
     for part in parts:
-        # Strip the leading "by" keyword if present (we add it ourselves)
         cleaned = part.strip()
         if cleaned.lower().startswith("by"):
             cleaned = cleaned[2:].strip()
@@ -176,7 +182,7 @@ def _parse_candidates(raw: str) -> list[str]:
 
 
 async def call_leanstral(prompt: str) -> list[str]:
-    """Call Leanstral for proof synthesis, returning candidate proofs.
+    """Call the proof-synthesis LLM, returning candidate proofs.
 
     If the API is not configured, returns generic tactic fallbacks.
     """
@@ -184,9 +190,9 @@ async def call_leanstral(prompt: str) -> list[str]:
         log.info("leanstral_not_configured, returning default tactics")
         return _DEFAULT_LEANSTRAL_TACTICS[:]
 
-    api_key = os.environ["LEANSTRAL_API_KEY"]
-    api_base = os.environ["LEANSTRAL_API_BASE"].rstrip("/")
-    model_id = _leanstral_cfg.get("model_id", "leanstral-v1")
+    api_key = _get_api_key()
+    api_base = _get_api_base()
+    model_id = _get_leanstral_model()
     max_tokens = _leanstral_cfg.get("max_tokens", 2048)
     temperature = _leanstral_cfg.get("temperature", 0.6)
     top_p = _leanstral_cfg.get("top_p", 0.95)
@@ -214,12 +220,7 @@ async def call_leanstral(prompt: str) -> list[str]:
         "top_p": top_p,
     }
 
-    log.info(
-        "leanstral_request",
-        url=url,
-        model=model_id,
-        prompt_len=len(prompt),
-    )
+    log.info("leanstral_request", url=url, model=model_id, prompt_len=len(prompt))
 
     try:
         async with httpx.AsyncClient(timeout=90) as client:
