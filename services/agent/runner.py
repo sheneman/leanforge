@@ -412,12 +412,64 @@ def run_turn(session_id: str) -> dict:
 # Main loop
 # ---------------------------------------------------------------------------
 
+def _auto_formalize(session_id: str, problem: str) -> str:
+    """Use the LLM to translate a natural language problem into a Lean 4 theorem statement."""
+    from services.agent.planner import _call_llm, PLANNER_MODEL
+
+    db.emit_event(session_id, "formalize_start", {"problem": problem[:300]})
+
+    system = (
+        "You are a Lean 4 formalization expert. "
+        "Given a natural language math statement, output ONLY the Lean 4 theorem statement. "
+        "Include the theorem keyword, name, arguments with types, and the proposition. "
+        "Do NOT include 'by', tactics, imports, or proof. "
+        "Do NOT wrap in code fences. "
+        "Example: theorem even_add (a b : Nat) (ha : Even a) (hb : Even b) : Even (a + b)"
+    )
+    user = f"Formalize this as a Lean 4 theorem statement:\n\n{problem}"
+
+    try:
+        raw = _call_llm(system, user, model=PLANNER_MODEL)
+        # Clean up: strip fences, thinking tags, pick first line that starts with theorem/lemma
+        raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
+        raw = re.sub(r"```\w*\s*", "", raw).strip()
+        for line in raw.split("\n"):
+            line = line.strip()
+            if re.match(r"^(theorem|lemma)\s", line):
+                lean_stmt = line
+                break
+        else:
+            lean_stmt = raw.split("\n")[0].strip()
+
+        # Remove trailing := by ... if the model added it
+        lean_stmt = re.sub(r"\s*:=\s*by.*$", "", lean_stmt).strip()
+
+        log.info("auto_formalized", session_id=session_id, statement=lean_stmt[:200])
+        db.emit_event(session_id, "formalize_result", {"lean_statement": lean_stmt})
+        return lean_stmt
+    except Exception as e:
+        log.error("auto_formalize_failed", error=str(e))
+        db.emit_event(session_id, "error", {"message": f"Auto-formalization failed: {e}"})
+        return ""
+
+
 def run_loop(session_id: str, max_turns: int = 1000, delay: int = TURN_DELAY_SECS) -> None:
     """Run the proof search loop until verified or max_turns reached."""
     session = db.get_session(session_id)
     if not session:
         log.error("session_not_found", session_id=session_id)
         sys.exit(1)
+
+    # Auto-formalize if no lean_statement provided
+    if not session.get("lean_statement"):
+        lean_stmt = _auto_formalize(session_id, session["problem"])
+        if lean_stmt:
+            db.update_session(session_id, lean_statement=lean_stmt)
+            session["lean_statement"] = lean_stmt
+        else:
+            log.error("no_lean_statement", session_id=session_id)
+            db.emit_event(session_id, "error", {"message": "Could not formalize the problem into Lean. Please provide a Lean theorem statement."})
+            return
 
     log.info("loop_start", session_id=session_id, max_turns=max_turns, problem=session["problem"][:100])
 

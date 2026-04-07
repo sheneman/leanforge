@@ -40,7 +40,7 @@ def _esc(s) -> str:
 class CreateSessionRequest(BaseModel):
     session_id: str
     problem: str
-    lean_statement: str
+    lean_statement: str = ""  # Optional — auto-formalized if not provided
     imports: str = "Mathlib.Tactic"
     max_turns: int = 500
 
@@ -774,8 +774,8 @@ body {{
         <input id="f-sid" type="text" placeholder="e.g. collatz_descent">
         <label for="f-problem">Problem Description</label>
         <textarea id="f-problem" placeholder="Natural language description..."></textarea>
-        <label for="f-lean">Lean Theorem Statement</label>
-        <textarea id="f-lean" placeholder="theorem foo : ..." style="min-height:80px;"></textarea>
+        <label for="f-lean">Lean Theorem Statement <span style="color:#484f58;font-weight:normal">(optional — auto-generated from problem if blank)</span></label>
+        <textarea id="f-lean" placeholder="Leave blank to auto-formalize, or enter e.g.: theorem foo (n : Nat) : n + 0 = n" style="min-height:80px;"></textarea>
         <label for="f-imports">Imports (comma-separated)</label>
         <input id="f-imports" type="text" value="Mathlib.Tactic">
         <label for="f-turns">Max Turns</label>
@@ -869,8 +869,8 @@ async function createSession() {{
   const turns = parseInt(document.getElementById('f-turns').value) || 500;
   const errEl = document.getElementById('form-error');
 
-  if (!sid || !problem || !lean) {{
-    errEl.textContent = 'Session ID, Problem, and Lean Statement are required.';
+  if (!sid || !problem) {{
+    errEl.textContent = 'Session ID and Problem are required.';
     return;
   }}
 
@@ -1085,6 +1085,16 @@ function renderEvent(evt) {{
     case 'turn_start':
       div.className = 'evt evt-turn-start';
       div.innerHTML = time + 'Turn ' + (d.turn || '?');
+      break;
+
+    case 'formalize_start':
+      div.className = 'evt evt-planner';
+      div.innerHTML = time + '<span style="color:var(--purple);">Auto-formalizing problem into Lean...</span>';
+      break;
+
+    case 'formalize_result':
+      div.className = 'evt evt-planner';
+      div.innerHTML = time + 'Formalized: <div class="evt-code">' + esc(d.lean_statement || '') + '</div>';
       break;
 
     case 'planner_start':
