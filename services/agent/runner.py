@@ -263,22 +263,58 @@ def run_turn(session_id: str) -> dict:
             best_tactics = tactics
             best_source = source
 
-    # 5. Log the attempt
+    # 5. Evaluate result — real progress detection, not just error counting
     diags = best_result.get("diagnostics", []) if best_result else []
     diag_messages = [
         (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
         for d in diags[:5]
     ]
     error_count = best_result.get("_error_count", 0) if best_result else 0
-    promising = error_count <= 2  # few errors = might be close
+
+    # Compute a signature of the errors to detect repeats
+    error_sig = "|".join(sorted(set(
+        (d.get("category", "") or d.get("message", "")[:40]) if isinstance(d, dict) else str(d)[:40]
+        for d in diags if (d.get("severity") if isinstance(d, dict) else "") == "error"
+    )))
+
+    # Check if this is genuinely new or just repeating recent failures
+    recent = db.get_recent_turns(session_id, limit=5)
+    recent_sigs = set()
+    recent_strategies = set()
+    for t in recent:
+        t_diags = t.get("diagnostics", [])
+        sig = "|".join(sorted(set(d[:40] for d in t_diags)))
+        recent_sigs.add(sig)
+        recent_strategies.add(t.get("strategy", ""))
+
+    # Determine if this is actually promising
+    is_repeat_error = error_sig in recent_sigs and error_sig != ""
+    is_repeat_strategy = strategy in recent_strategies
+    is_syntax_error = any(
+        kw in error_sig.lower()
+        for kw in ["introN", "unexpected token", "expected command", "unknown tactic"]
+    )
+
+    if error_count == 0:
+        promising = True  # No errors = genuinely promising
+    elif is_repeat_error and is_repeat_strategy:
+        promising = False  # Same strategy, same errors = dead end
+    elif is_syntax_error:
+        promising = False  # Syntax errors are never promising
+    elif error_count == 1 and not is_repeat_error:
+        promising = True  # One new error type = might be close
+    else:
+        promising = False  # Multiple errors or repeated = not promising
+
+    result_label = "partial" if promising else "failed"
 
     db.log_turn(
         session_id=session_id,
         turn_number=turn_number,
         strategy=strategy,
         tactics_tried=[best_tactics],
-        lean_source=best_source[:2000],
-        result="partial" if promising else "failed",
+        lean_source=best_source[:3000],
+        result=result_label,
         diagnostics=diag_messages,
         promising=promising,
         notes=plan.get("reasoning", ""),
@@ -288,7 +324,7 @@ def run_turn(session_id: str) -> dict:
     outcome = "promising" if promising else "dead_end"
     db.log_strategy(session_id, strategy, plan.get("strategy_description", ""), outcome, [turn_number])
 
-    # Update best partial proof if this was promising
+    # Only update best partial proof if genuinely promising
     if promising and best_source:
         db.update_session(session_id, best_partial_proof=best_source[:5000])
 
