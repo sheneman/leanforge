@@ -342,13 +342,13 @@ def run_turn(session_id: str) -> dict:
                 notes=f"VERIFIED! {plan.get('reasoning', '')}",
             )
             db.log_strategy(session_id, strategy, plan.get("strategy_description", ""), "verified", [turn_number])
-                db.emit_event(session_id, "turn_complete", {
-                    "turn": turn_number,
-                    "result": "verified",
-                    "promising": True,
-                    "error_count": 0,
-                })
-                return {"result": "verified", "proof": best_source, "turn": turn_number}
+            db.emit_event(session_id, "turn_complete", {
+                "turn": turn_number,
+                "result": "verified",
+                "promising": True,
+                "error_count": 0,
+            })
+            return {"result": "verified", "proof": best_source, "turn": turn_number}
 
     # Track error count from final result
     best_result = result
