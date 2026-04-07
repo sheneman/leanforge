@@ -34,7 +34,7 @@ load_dotenv()
 
 # Must import after load_dotenv so env vars are available
 from services.agent import db
-from services.agent.planner import plan_next_step, synthesize_tactics
+from services.agent.planner import plan_next_step, synthesize_tactics, repair_tactics
 
 log = structlog.get_logger()
 
@@ -216,43 +216,84 @@ def run_turn(session_id: str) -> dict:
             category="web_research",
         )
 
-    # 3. Synthesize tactics
-    # Use Leanstral with plan hints + search results + web context
-    hints = plan.get("strategy_description", "")
-    if web_results:
-        hints += "\nWeb research findings:\n" + "\n".join(
-            f"  {wr['title'][:80]}: {wr['description'][:150]}" for wr in web_results[:3]
-        )
+    # 3. Synthesize tactics via Leanstral (ALL code generation goes through Leanstral)
+    strategy_desc = plan.get("strategy_description", "")
+    lemma_hints = ""
     if all_lemmas:
-        hints += "\nRelevant lemmas:\n" + "\n".join(
+        lemma_hints = "\n".join(
             f"  {l['name']}: {l.get('statement', '')[:150]}" for l in all_lemmas[:10]
         )
+    if web_results:
+        lemma_hints += "\nWeb research:\n" + "\n".join(
+            f"  {wr['title'][:80]}: {wr['description'][:150]}" for wr in web_results[:3]
+        )
 
-    # Try the plan's suggested tactics first, then Leanstral
-    tactics_options = []
-    if plan.get("suggested_tactics"):
-        tactics_options.append(("plan", plan["suggested_tactics"]))
+    db.emit_event(session_id, "synthesize_start", {
+        "strategy": strategy_desc[:300],
+        "hints_len": len(lemma_hints),
+    })
+    leanstral_tactics, _ = synthesize_tactics(
+        session["lean_statement"],
+        strategy=strategy_desc,
+        hints=lemma_hints,
+        session_id=session_id,
+    )
+    db.emit_event(session_id, "synthesize_result", {
+        "tactics": leanstral_tactics[:500],
+    })
 
-    db.emit_event(session_id, "synthesize_start", {"hints_len": len(hints)})
-    leanstral_tactics, leanstral_reasoning = synthesize_tactics(session["lean_statement"], hints, session_id=session_id)
-    if leanstral_tactics:
-        tactics_options.append(("leanstral", leanstral_tactics))
-        db.emit_event(session_id, "synthesize_result", {
-            "tactics": leanstral_tactics[:500],
-        })
-
-    # 4. Verify each option
+    # 4. Verify Leanstral's output
     best_result = None
-    best_tactics = ""
+    best_tactics = leanstral_tactics
     best_source = ""
 
-    for source_name, tactics in tactics_options:
+    source = build_lean_source(
+        session["lean_statement"],
+        session["imports"],
+        leanstral_tactics,
+    )
+    best_source = source
+
+    db.emit_event(session_id, "verify_start", {"source": source[:3000]})
+    t0 = time.time()
+    result = verify_lean(source)
+    elapsed = round(time.time() - t0, 2)
+
+    verify_diags = result.get("diagnostics", [])
+    db.emit_event(session_id, "verify_result", {
+        "success": result.get("success", False),
+        "diagnostics": [
+            (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
+            for d in verify_diags[:5]
+        ],
+        "elapsed": elapsed,
+    })
+
+    # 4b. If failed, try Leanstral REPAIR (send errors back to Leanstral)
+    if not result.get("success"):
+        diag_msgs = [
+            (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
+            for d in verify_diags[:5]
+        ]
+        db.emit_event(session_id, "repair_start", {
+            "diagnostics": diag_msgs,
+        })
+        repaired_tactics, _ = repair_tactics(
+            session["lean_statement"],
+            leanstral_tactics,
+            diag_msgs,
+            session_id=session_id,
+        )
+        db.emit_event(session_id, "repair_result", {
+            "tactics": repaired_tactics[:500],
+        })
+
+        # Verify the repaired version
         source = build_lean_source(
             session["lean_statement"],
             session["imports"],
-            tactics,
+            repaired_tactics,
         )
-
         db.emit_event(session_id, "verify_start", {"source": source[:3000]})
         t0 = time.time()
         result = verify_lean(source)
@@ -269,43 +310,51 @@ def run_turn(session_id: str) -> dict:
         })
 
         if result.get("success"):
-            # Check for sorry warning
-            has_sorry = any(
-                "sorry" in (d.get("message", "") if isinstance(d, dict) else str(d))
-                for d in result.get("diagnostics", [])
+            best_tactics = repaired_tactics
+            best_source = source
+        else:
+            # Use whichever had fewer errors
+            repair_errors = sum(1 for d in verify_diags if (d.get("severity") if isinstance(d, dict) else "") == "error")
+            orig_errors = best_result.get("_error_count", 999) if best_result else 999
+            if repair_errors < orig_errors:
+                best_tactics = repaired_tactics
+                best_source = source
+
+    # Check for verified proof (from either initial or repaired attempt)
+    if result.get("success"):
+        has_sorry = any(
+            "sorry" in (d.get("message", "") if isinstance(d, dict) else str(d))
+            for d in result.get("diagnostics", [])
+        )
+        if not has_sorry:
+            # VERIFIED!
+            log.info("VERIFIED", session_id=session_id, turn=turn_number)
+            db.update_session(session_id, status="verified", verified_proof=best_source)
+            db.log_turn(
+                session_id=session_id,
+                turn_number=turn_number,
+                strategy=strategy,
+                tactics_tried=[best_tactics],
+                lean_source=best_source,
+                result="verified",
+                diagnostics=[],
+                promising=True,
+                notes=f"VERIFIED! {plan.get('reasoning', '')}",
             )
-            if not has_sorry:
-                # VERIFIED!
-                log.info("VERIFIED", session_id=session_id, turn=turn_number, source=source_name)
-                db.update_session(session_id, status="verified", verified_proof=source)
-                db.log_turn(
-                    session_id=session_id,
-                    turn_number=turn_number,
-                    strategy=strategy,
-                    tactics_tried=[tactics],
-                    lean_source=source,
-                    result="verified",
-                    diagnostics=[],
-                    promising=True,
-                    notes=f"VERIFIED via {source_name}! {plan.get('reasoning', '')}",
-                )
-                db.log_strategy(session_id, strategy, plan.get("strategy_description", ""), "verified", [turn_number])
+            db.log_strategy(session_id, strategy, plan.get("strategy_description", ""), "verified", [turn_number])
                 db.emit_event(session_id, "turn_complete", {
                     "turn": turn_number,
                     "result": "verified",
                     "promising": True,
                     "error_count": 0,
                 })
-                return {"result": "verified", "proof": source, "turn": turn_number}
+                return {"result": "verified", "proof": best_source, "turn": turn_number}
 
-        # Track best result (fewest errors, or partial success)
-        diags = result.get("diagnostics", [])
-        error_count = sum(1 for d in diags if (d.get("severity") if isinstance(d, dict) else "") == "error")
-        if best_result is None or error_count < best_result.get("_error_count", 999):
-            best_result = result
-            best_result["_error_count"] = error_count
-            best_tactics = tactics
-            best_source = source
+    # Track error count from final result
+    best_result = result
+    diags = result.get("diagnostics", [])
+    error_count = sum(1 for d in diags if (d.get("severity") if isinstance(d, dict) else "") == "error")
+    best_result["_error_count"] = error_count
 
     # 5. Evaluate result — real progress detection, not just error counting
     diags = best_result.get("diagnostics", []) if best_result else []

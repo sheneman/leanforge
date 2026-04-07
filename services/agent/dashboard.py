@@ -1162,6 +1162,21 @@ function renderEvent(evt) {{
       div.innerHTML = wh;
       break;
 
+    case 'repair_start':
+      div.className = 'evt';
+      div.innerHTML = time + '<span style="color:var(--yellow);">Sending errors to Leanstral for repair...</span>';
+      break;
+
+    case 'repair_result':
+      div.className = 'evt';
+      div.innerHTML = time + '<span style="color:var(--yellow);">Repaired tactics:</span><div class="evt-tactics">' + esc(d.tactics || '') + '</div>';
+      break;
+
+    case 'repair_thinking':
+      div.className = 'evt';
+      div.innerHTML = time + '<details><summary style="color:var(--yellow);cursor:pointer">Leanstral repair reasoning (click to expand)</summary><div class="evt-reasoning">' + esc(d.reasoning || '') + '</div></details>';
+      break;
+
     case 'synthesize_thinking':
       div.className = 'evt';
       div.innerHTML = time + '<details><summary style="color:var(--teal);cursor:pointer">Leanstral reasoning (click to expand)</summary><div class="evt-reasoning">' + esc(d.reasoning || '') + '</div></details>';
