@@ -50,8 +50,19 @@ class CreateSessionRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _start_runner(session_id: str, max_turns: int) -> None:
-    from services.agent.runner import run_loop
-    run_loop(session_id, max_turns=max_turns, delay=10)
+    import traceback
+    try:
+        from services.agent.runner import run_loop
+        run_loop(session_id, max_turns=max_turns, delay=10)
+    except Exception as e:
+        print(f"RUNNER CRASHED: {session_id}: {e}", flush=True)
+        traceback.print_exc()
+        try:
+            from services.agent import db as agent_db
+            agent_db.emit_event(session_id, "error", {"message": f"Runner crashed: {e}"})
+            agent_db.update_session(session_id, status="stuck")
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
