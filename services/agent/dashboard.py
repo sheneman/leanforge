@@ -194,9 +194,12 @@ async def api_stream_events(session_id: str):
             }
             yield f"data: {json.dumps(data)}\n\n"
 
-        # STREAM: poll for new events
+        # Send a heartbeat so the connection stays alive
+        yield f": heartbeat\n\n"
+
+        # STREAM: poll for new events — fast polling (0.5s)
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.5)
             query = {"session_id": session_id}
             if last_id:
                 query["_id"] = {"$gt": last_id}
@@ -212,6 +215,10 @@ async def api_stream_events(session_id: str):
                     "timestamp": str(evt.get("timestamp", ""))[:19],
                 }
                 yield f"data: {json.dumps(data)}\n\n"
+
+            # Send periodic heartbeat to prevent proxy/browser timeout
+            if not new_events:
+                yield f": heartbeat\n\n"
 
     return StreamingResponse(
         event_generator(),
