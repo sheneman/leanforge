@@ -17,6 +17,7 @@ from pymongo import MongoClient, DESCENDING
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "leanforge")
 
+PREFIX = os.getenv("DASHBOARD_PREFIX", "/dashboard")
 app = FastAPI(title="LeanForge Dashboard", version="0.1.0")
 
 CSS = """
@@ -83,7 +84,7 @@ async def index():
         n_strats = db.strategies.count_documents({"session_id": sid})
         n_lessons = db.lessons.count_documents({"session_id": sid})
         rows += "<tr>"
-        rows += '<td><a href="/session/' + _esc(sid) + '">' + _esc(sid) + "</a></td>"
+        rows += '<td><a href="' + PREFIX + '/session/' + _esc(sid) + '">' + _esc(sid) + "</a></td>"
         rows += '<td class="' + status + '">' + status + "</td>"
         rows += "<td>" + str(turns) + "</td>"
         rows += "<td>" + str(n_strats) + "</td>"
@@ -107,7 +108,7 @@ async def session_detail(session_id: str):
     if not s:
         return _page("Not Found", "<p>Session not found</p>")
 
-    body = '<p><a href="/">&larr; All Sessions</a></p>'
+    body = '<p><a href="' + PREFIX + '/">&larr; All Sessions</a></p>'
     body += "<h2>" + _esc(session_id) + "</h2>"
 
     # Info table
