@@ -313,6 +313,15 @@ def run_turn(session_id: str) -> dict:
             best_tactics = repaired_tactics
             best_source = source
         else:
+            # Learn from repair failure immediately
+            repair_diag_msgs = [
+                (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
+                for d in verify_diags[:5]
+            ]
+            db.learn_from_repair_failure(
+                session_id, leanstral_tactics, repaired_tactics,
+                diag_msgs, repair_diag_msgs,
+            )
             # Use whichever had fewer errors
             repair_errors = sum(1 for d in verify_diags if (d.get("severity") if isinstance(d, dict) else "") == "error")
             orig_errors = best_result.get("_error_count", 999) if best_result else 999
@@ -421,13 +430,13 @@ def run_turn(session_id: str) -> dict:
     if promising and best_source:
         db.update_session(session_id, best_partial_proof=best_source[:5000])
 
-    # Auto-extract lessons from repeated errors every 10 turns
-    if turn_number % 10 == 0:
+    # Auto-extract lessons after every failed turn (not just every 10)
+    if not promising:
         new_lessons = db.auto_extract_lessons(session_id)
         if new_lessons:
             log.info("lessons_extracted", session_id=session_id, count=new_lessons)
             db.emit_event(session_id, "lesson_learned", {
-                "lesson": "Auto-extracted lessons from repeated errors",
+                "lesson": f"Extracted {new_lessons} lesson(s) from errors",
                 "count": new_lessons,
             })
 

@@ -246,14 +246,20 @@ def lessons() -> Collection:
     return _db()["lessons"]
 
 
-def log_lesson(session_id: str, lesson: str, category: str = "technical") -> None:
-    """Log a technical lesson (idempotent — deduplicates by text)."""
+def log_lesson(session_id: str, lesson: str, category: str = "technical", global_lesson: bool = False) -> None:
+    """Log a technical lesson (idempotent — deduplicates by text).
+
+    If global_lesson=True, the lesson is stored with session_id="_global"
+    so it applies to ALL future sessions.
+    """
+    target_sid = "_global" if global_lesson else session_id
     lessons().update_one(
-        {"session_id": session_id, "lesson": lesson},
+        {"session_id": target_sid, "lesson": lesson},
         {
             "$set": {
                 "category": category,
                 "updated_at": datetime.now(timezone.utc),
+                "source_session": session_id,
             },
             "$inc": {"hit_count": 1},
         },
@@ -287,43 +293,65 @@ def get_events_since(session_id: str, since_id: str | None = None, limit: int = 
 
 
 def get_lessons(session_id: str) -> list[dict]:
-    """Get lessons, prioritizing technical/api/syntax over web_research."""
-    # Get non-web lessons first (these are the important ones)
-    core = list(lessons().find(
+    """Get lessons: global lessons first, then session-specific.
+
+    Global lessons (session_id="_global") apply to ALL sessions.
+    They appear first so the planner always sees them.
+    """
+    # Global lessons — always included
+    global_core = list(lessons().find(
+        {"session_id": "_global", "category": {"$ne": "web_research"}}
+    ).sort("hit_count", DESCENDING).limit(10))
+
+    # Session-specific lessons
+    session_core = list(lessons().find(
         {"session_id": session_id, "category": {"$ne": "web_research"}}
-    ).sort("hit_count", DESCENDING).limit(15))
-    # Then web research
+    ).sort("hit_count", DESCENDING).limit(10))
+
+    # Deduplicate by lesson text
+    seen = set()
+    result = []
+    for l in global_core + session_core:
+        text = l["lesson"]
+        if text not in seen:
+            seen.add(text)
+            result.append(l)
+
+    # Add a few web research results
     web = list(lessons().find(
         {"session_id": session_id, "category": "web_research"}
-    ).sort("hit_count", DESCENDING).limit(5))
-    return core + web
+    ).sort("hit_count", DESCENDING).limit(3))
+    for l in web:
+        if l["lesson"] not in seen:
+            result.append(l)
+
+    return result[:20]
 
 
 def auto_extract_lessons(session_id: str) -> int:
-    """Scan recent turns for repeated diagnostics and auto-create lessons.
+    """Extract lessons from diagnostics. Lower threshold (2+), promote to global.
 
-    If the same diagnostic substring appears in 3+ different turns,
-    extract it as a lesson so the planner stops repeating the mistake.
-    Returns the number of new lessons created.
+    Called after every failed turn (not just every 10). Lessons that appear
+    across 2+ turns become session lessons; those appearing 5+ times across
+    ANY session become global lessons.
     """
-    # Get all diagnostics from this session
     pipeline = [
         {"$match": {"session_id": session_id}},
         {"$unwind": "$diagnostics"},
         {"$group": {"_id": "$diagnostics", "count": {"$sum": 1}}},
-        {"$match": {"count": {"$gte": 3}}},
+        {"$match": {"count": {"$gte": 2}}},
         {"$sort": {"count": DESCENDING}},
-        {"$limit": 20},
+        {"$limit": 15},
     ]
     repeated = list(turns().aggregate(pipeline))
 
-    # Known diagnostic patterns → lesson text
     _LESSON_MAP = {
-        "unknown constant": "This constant/lemma does not exist in the current mathlib. Search for the correct name.",
-        "unknown identifier": "This identifier does not exist. Use scripts/search.py to find the correct name.",
-        "introN": "'introN' is NOT a valid Lean 4 tactic. Use 'intro a b c' (naming each variable).",
-        "iterate_succ_apply'": "Nat.iterate_succ_apply' does NOT exist. Use Function.iterate_succ_apply' or unfold Nat.iterate manually.",
-        "unexpected token": "Syntax error — check Lean 4 syntax. Common issues: missing 'by', wrong indentation, stale Lean 3 syntax.",
+        "unknown constant": "This constant/lemma does not exist in current mathlib. Search for the correct name.",
+        "unknown identifier": "This identifier does not exist. Search retrieval for the correct name.",
+        "introN": "'introN' is NOT a valid Lean 4 tactic. Use 'intro a b c' naming each variable.",
+        "iterate_succ_apply'": "Nat.iterate_succ_apply' does NOT exist. Use Function.iterate_succ_apply'.",
+        "unexpected token": "Lean 4 syntax error. Common causes: angle brackets ⟨⟩ in rcases (use 'obtain' or 'have' instead), stale Lean 3 syntax, missing 'by'.",
+        "unexpected identifier; expected command": "Likely caused by Unicode angle brackets ⟨⟩ in tactics. Use 'obtain' or 'have' destructuring instead of rcases with ⟨⟩.",
     }
 
     new_count = 0
@@ -331,23 +359,62 @@ def auto_extract_lessons(session_id: str) -> int:
         diag = item["_id"]
         if not isinstance(diag, str) or len(diag) < 10:
             continue
-        # Check if this matches a known pattern
+
         lesson_text = None
         for pattern, text in _LESSON_MAP.items():
             if pattern.lower() in diag.lower():
-                lesson_text = f"{text} (seen {item['count']}x: '{diag[:100]}')"
+                lesson_text = text
                 break
         if not lesson_text:
-            # Generic lesson from repeated diagnostic
-            lesson_text = f"Repeated error ({item['count']}x): {diag[:150]}"
+            lesson_text = f"Repeated error: {diag[:150]}"
 
-        # Only log if not already a lesson
-        existing = lessons().find_one({"session_id": session_id, "lesson": {"$regex": diag[:50]}})
+        # Log as session lesson
+        existing = lessons().find_one({
+            "session_id": session_id,
+            "lesson": lesson_text,
+        })
         if not existing:
             log_lesson(session_id, lesson_text, category="auto_extracted")
             new_count += 1
 
+        # Promote to global if seen 5+ times (across this or any session)
+        if item["count"] >= 5:
+            log_lesson(session_id, lesson_text, category="auto_extracted", global_lesson=True)
+
     return new_count
+
+
+def learn_from_repair_failure(
+    session_id: str,
+    original_tactics: str,
+    repaired_tactics: str,
+    original_diags: list[str],
+    repair_diags: list[str],
+) -> None:
+    """Extract a lesson when repair fails with the same or new errors.
+
+    Called immediately after a failed repair attempt so the system
+    learns within the same turn.
+    """
+    # If repair produced the same errors, the approach is fundamentally wrong
+    orig_set = set(d[:50] for d in original_diags)
+    repair_set = set(d[:50] for d in repair_diags)
+
+    if orig_set & repair_set:
+        # Same errors after repair — the fix didn't work
+        shared = orig_set & repair_set
+        for err in shared:
+            lesson = f"Repair did not fix: '{err[:80]}'. Need a fundamentally different approach, not a syntax fix."
+            log_lesson(session_id, lesson, category="repair_failure")
+
+    # Check for specific patterns in what changed
+    if "⟨" in original_tactics or "⟨" in repaired_tactics:
+        log_lesson(
+            session_id,
+            "Unicode angle brackets ⟨⟩ in tactics cause 'unexpected identifier' errors. Use 'obtain' or 'have' destructuring instead.",
+            category="syntax",
+            global_lesson=True,
+        )
 
 
 # ---------------------------------------------------------------------------
