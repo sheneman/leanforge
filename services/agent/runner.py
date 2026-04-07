@@ -234,7 +234,7 @@ def run_turn(session_id: str) -> dict:
         tactics_options.append(("plan", plan["suggested_tactics"]))
 
     db.emit_event(session_id, "synthesize_start", {"hints_len": len(hints)})
-    leanstral_tactics = synthesize_tactics(session["lean_statement"], hints)
+    leanstral_tactics, leanstral_reasoning = synthesize_tactics(session["lean_statement"], hints, session_id=session_id)
     if leanstral_tactics:
         tactics_options.append(("leanstral", leanstral_tactics))
         db.emit_event(session_id, "synthesize_result", {
@@ -429,7 +429,9 @@ def _auto_formalize(session_id: str, problem: str) -> str:
     user = f"Formalize this as a Lean 4 theorem statement:\n\n{problem}"
 
     try:
-        raw = _call_llm(system, user, model=PLANNER_MODEL)
+        raw, reasoning = _call_llm(system, user, model=PLANNER_MODEL)
+        if reasoning:
+            db.emit_event(session_id, "formalize_thinking", {"reasoning": reasoning[:3000]})
         # Clean up: strip fences, thinking tags, pick first line that starts with theorem/lemma
         raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
         raw = re.sub(r"```\w*\s*", "", raw).strip()

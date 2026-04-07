@@ -46,8 +46,12 @@ REASONING: <why this might work, 1-2 sentences>
 """
 
 
-def _call_llm(system: str, user: str, model: str | None = None) -> str:
-    """Call the LLM API and return the response text."""
+def _call_llm(system: str, user: str, model: str | None = None) -> tuple[str, str]:
+    """Call the LLM API and return (content, reasoning_trace).
+
+    Returns both the final output and any reasoning/thinking trace
+    so callers can emit both for visibility.
+    """
     model = model or LLM_API_MODEL
     if not LLM_API_BASE or not LLM_API_KEY or not model:
         raise RuntimeError("LLM_API_BASE, LLM_API_KEY, and model must be configured")
@@ -72,8 +76,12 @@ def _call_llm(system: str, user: str, model: str | None = None) -> str:
         )
         resp.raise_for_status()
         msg = resp.json()["choices"][0]["message"]
-        content = msg.get("content") or msg.get("reasoning_content") or ""
-        return content
+        content = msg.get("content") or ""
+        reasoning = msg.get("reasoning_content") or ""
+        # If content is empty but reasoning exists, use reasoning as content
+        if not content and reasoning:
+            content = reasoning
+        return content, reasoning
 
 
 def _format_context_for_prompt(ctx: dict) -> str:
@@ -210,8 +218,15 @@ def plan_next_step(session_id: str) -> dict:
     prompt = _format_context_for_prompt(ctx)
     log.info("planner_prompt", session_id=session_id, prompt_len=len(prompt))
 
-    raw = _call_llm(PLANNER_SYSTEM_PROMPT, prompt, model=PLANNER_MODEL)
-    log.info("planner_response", session_id=session_id, response_len=len(raw))
+    raw, reasoning = _call_llm(PLANNER_SYSTEM_PROMPT, prompt, model=PLANNER_MODEL)
+    log.info("planner_response", session_id=session_id, response_len=len(raw), reasoning_len=len(reasoning))
+
+    # Emit the reasoning trace so the dashboard can show it
+    if reasoning:
+        from services.agent.db import emit_event
+        emit_event(session_id, "planner_thinking", {
+            "reasoning": reasoning[:5000],
+        })
 
     plan = _parse_structured_response(raw)
 
@@ -232,10 +247,10 @@ def plan_next_step(session_id: str) -> dict:
     return plan
 
 
-def synthesize_tactics(theorem_statement: str, hints: str = "") -> str:
-    """Call Leanstral for tactic suggestions."""
+def synthesize_tactics(theorem_statement: str, hints: str = "", session_id: str = "") -> tuple[str, str]:
+    """Call Leanstral for tactic suggestions. Returns (tactics, reasoning)."""
     if not LEANSTRAL_API_MODEL:
-        return "exact?"
+        return "exact?", ""
 
     user = f"Prove: {theorem_statement}"
     if hints:
@@ -249,7 +264,13 @@ def synthesize_tactics(theorem_statement: str, hints: str = "") -> str:
     )
 
     try:
-        return _call_llm(system, user, model=LEANSTRAL_API_MODEL)
+        content, reasoning = _call_llm(system, user, model=LEANSTRAL_API_MODEL)
+        if reasoning and session_id:
+            from services.agent.db import emit_event
+            emit_event(session_id, "synthesize_thinking", {
+                "reasoning": reasoning[:3000],
+            })
+        return content, reasoning
     except Exception as e:
         log.error("synthesize_failed", error=str(e))
-        return "exact?"
+        return "exact?", ""

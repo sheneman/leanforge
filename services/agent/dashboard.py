@@ -523,6 +523,19 @@ body {{
   color: var(--text-dim);
   font-style: italic;
 }}
+.evt-reasoning {{
+  background: rgba(88,166,255,0.06);
+  border: 1px solid rgba(88,166,255,0.1);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  font-size: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  line-height: 1.5;
+}}
 .evt-tactics {{
   background: rgba(63,185,80,0.06);
   border: 1px solid rgba(63,185,80,0.15);
@@ -1098,9 +1111,19 @@ function renderEvent(evt) {{
       div.innerHTML = time + '<span style="color:var(--purple);">Auto-formalizing problem into Lean...</span>';
       break;
 
+    case 'formalize_thinking':
+      div.className = 'evt';
+      div.innerHTML = time + '<details><summary style="color:var(--purple);cursor:pointer">Formalization reasoning (click to expand)</summary><div class="evt-reasoning">' + esc(d.reasoning || '') + '</div></details>';
+      break;
+
     case 'formalize_result':
       div.className = 'evt evt-planner';
       div.innerHTML = time + 'Formalized: <div class="evt-code">' + esc(d.lean_statement || '') + '</div>';
+      break;
+
+    case 'planner_thinking':
+      div.className = 'evt';
+      div.innerHTML = time + '<details><summary style="color:var(--blue);cursor:pointer">Planner reasoning (click to expand)</summary><div class="evt-reasoning">' + esc(d.reasoning || '') + '</div></details>';
       break;
 
     case 'planner_start':
@@ -1137,6 +1160,11 @@ function renderEvent(evt) {{
         wh += '<br>&nbsp;&nbsp;' + esc(r.title || '');
       }}
       div.innerHTML = wh;
+      break;
+
+    case 'synthesize_thinking':
+      div.className = 'evt';
+      div.innerHTML = time + '<details><summary style="color:var(--teal);cursor:pointer">Leanstral reasoning (click to expand)</summary><div class="evt-reasoning">' + esc(d.reasoning || '') + '</div></details>';
       break;
 
     case 'synthesize_start':
