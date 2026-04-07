@@ -177,18 +177,24 @@ async def api_get_events(session_id: str, since: str | None = None, limit: int =
 
 @app.get("/api/stream/{session_id}")
 async def api_stream_events(session_id: str):
-    """SSE endpoint that polls MongoDB events collection every 2 seconds."""
+    """SSE endpoint — replays all existing events then streams new ones."""
     async def event_generator():
         db = _db()
-        # Find the latest event ID to start from
         last_id = None
-        latest = db.events.find_one(
-            {"session_id": session_id},
-            sort=[("_id", DESCENDING)],
-        )
-        if latest:
-            last_id = latest["_id"]
 
+        # REPLAY: send all existing events first so the UI shows full history
+        existing = list(db.events.find({"session_id": session_id}).sort("_id", 1))
+        for evt in existing:
+            last_id = evt["_id"]
+            data = {
+                "id": str(evt["_id"]),
+                "type": evt["type"],
+                "data": evt.get("data", {}),
+                "timestamp": str(evt.get("timestamp", ""))[:19],
+            }
+            yield f"data: {json.dumps(data)}\n\n"
+
+        # STREAM: poll for new events
         while True:
             await asyncio.sleep(2)
             query = {"session_id": session_id}
