@@ -108,6 +108,87 @@ def verify_lean(source: str) -> dict:
         return {"success": False, "diagnostics": [{"message": str(e)}]}
 
 
+def _clean_leanstral_output(raw: str) -> str:
+    """Aggressively clean Leanstral output to extract only valid Lean 4 tactics.
+
+    Leanstral often produces:
+    - Code fences (```lean4, ```tactics, ```)
+    - Natural language explanations mixed with code
+    - Multiple disconnected code blocks
+    - Import statements and theorem declarations
+    - Hallucinated lemma names with commentary
+
+    This function extracts the first coherent block of tactic code.
+    """
+    # Strip code fences
+    raw = re.sub(r"```\w*", "", raw)
+
+    # If there's a := by in the output, extract everything after it
+    by_match = re.search(r":=\s*by\s*\n([\s\S]+)", raw)
+    if by_match:
+        raw = by_match.group(1)
+
+    # Split into lines and filter
+    lines = raw.split("\n")
+    tactic_lines: list[str] = []
+    in_tactics = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip empty lines at the start
+        if not in_tactics and not stripped:
+            continue
+
+        # Skip imports, opens, theorem declarations
+        if stripped.startswith("import ") or stripped.startswith("open "):
+            continue
+        if re.match(r"^(theorem|lemma|def|example|#)\s", stripped):
+            continue
+
+        # Skip natural language lines (heuristic: starts with uppercase letter
+        # followed by lowercase, contains no Lean-like tokens)
+        if (re.match(r"^[A-Z][a-z]", stripped)
+            and not any(kw in stripped for kw in [
+                "have ", "let ", "show ", "suffices ", "calc ", "match ",
+                "cases ", "induction ", "apply ", "exact ", "rw ", "simp ",
+                "intro ", "obtain ", "use ", "refine ", "constructor",
+                "by_cases ", "omega", "linarith", "ring", "norm_num",
+                "sorry", "trivial", "tauto", "aesop", "decide",
+            ])):
+            # If we already have tactics, this natural language line means
+            # the coherent block ended
+            if in_tactics and tactic_lines:
+                break
+            continue
+
+        # Skip lines that are clearly commentary
+        if stripped.startswith("--") and not in_tactics:
+            continue
+        if stripped.startswith("So ") or stripped.startswith("Now ") or stripped.startswith("But "):
+            if in_tactics and tactic_lines:
+                break
+            continue
+        if stripped.startswith("Wait") or stripped.startswith("Alternatively") or stripped.startswith("Looking"):
+            if in_tactics and tactic_lines:
+                break
+            continue
+
+        # This looks like a tactic line
+        in_tactics = True
+        tactic_lines.append(line)
+
+    result = "\n".join(tactic_lines).strip()
+
+    # Strip leading "by" if present
+    if result.lower().startswith("by\n") or result.lower().startswith("by "):
+        result = result[2:].strip()
+    elif result.lower() == "by":
+        result = ""
+
+    return result if result else "sorry"
+
+
 def build_lean_source(lean_statement: str, imports: list[str], tactics: str, preamble: str = "") -> str:
     """Assemble a complete Lean source file."""
     import_lines = "\n".join(f"import {i}" for i in imports)
@@ -118,17 +199,8 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
         name = "auto_" + hashlib.md5(stmt.encode()).hexdigest()[:8]
         stmt = f"theorem {name} : {stmt}"
 
-    # Clean tactics: strip ALL code fences (opening and closing), imports, declarations
-    tactics = re.sub(r"```\w*", "", tactics)  # strip ```lean4, ```tactics, ```, etc.
-    lines = []
-    for line in tactics.split("\n"):
-        s = line.strip()
-        if s.startswith("import ") or s.startswith("open ") or re.match(r"^(theorem|lemma|def)\s", s):
-            continue
-        lines.append(line)
-    tactics = "\n".join(lines).strip()
-    if tactics.lower().startswith("by\n") or tactics.lower().startswith("by "):
-        tactics = tactics[2:].strip()
+    # Clean the tactics through the aggressive filter
+    tactics = _clean_leanstral_output(tactics)
 
     parts = [import_lines, ""]
     if preamble:
