@@ -66,7 +66,7 @@ def _call_llm(system: str, user: str, model: str | None = None) -> str:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "max_tokens": 4096,
+                "max_tokens": 16384,
                 "temperature": 0.4,
             },
         )
