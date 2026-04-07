@@ -262,7 +262,16 @@ def log_lesson(session_id: str, lesson: str, category: str = "technical") -> Non
 
 
 def get_lessons(session_id: str) -> list[dict]:
-    return list(lessons().find({"session_id": session_id}).sort("hit_count", DESCENDING))
+    """Get lessons, prioritizing technical/api/syntax over web_research."""
+    # Get non-web lessons first (these are the important ones)
+    core = list(lessons().find(
+        {"session_id": session_id, "category": {"$ne": "web_research"}}
+    ).sort("hit_count", DESCENDING).limit(15))
+    # Then web research
+    web = list(lessons().find(
+        {"session_id": session_id, "category": "web_research"}
+    ).sort("hit_count", DESCENDING).limit(5))
+    return core + web
 
 
 def auto_extract_lessons(session_id: str) -> int:

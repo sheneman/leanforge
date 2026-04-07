@@ -206,16 +206,14 @@ evtSource.onmessage = function(event) {
     if (data.reasoning) {
         h += '<br><span class="reasoning">' + data.reasoning + '</span>';
     }
-    if (data.tactics && data.tactics.length > 0) {
-        h += '<br><span class="tactic">tactics: ' + data.tactics[0].substring(0, 200) + '</span>';
+    if (data.lean_source) {
+        h += '<br><details><summary style="color:#7ee787;font-size:12px;cursor:pointer">Lean source</summary>';
+        h += '<pre style="font-size:11px;margin:4px 0;max-height:300px;overflow:auto">' + data.lean_source + '</pre></details>';
     }
     if (data.diagnostics && data.diagnostics.length > 0) {
         for (let d of data.diagnostics) {
             h += '<br><span class="diag">&gt; ' + d + '</span>';
         }
-    }
-    if (data.search_results) {
-        h += '<br><span class="search">search: ' + data.search_results + '</span>';
     }
 
     div.innerHTML = h;
@@ -265,8 +263,11 @@ async def live_view(session_id: str):
         body += '<span class="' + cls + '">' + icon + ' ' + t["result"] + '</span>'
         if t.get("notes"):
             body += '<br><span class="reasoning">' + _esc(t["notes"][:200]) + '</span>'
-        for d in diags[:2]:
-            body += '<br><span class="diag">&gt; ' + _esc(d[:150]) + '</span>'
+        if t.get("lean_source"):
+            body += '<br><details><summary style="color:#7ee787;font-size:12px;cursor:pointer">Lean source</summary>'
+            body += '<pre style="font-size:11px;margin:4px 0;max-height:300px;overflow:auto">' + _esc(t["lean_source"][:2000]) + '</pre></details>'
+        for d in diags[:3]:
+            body += '<br><span class="diag">&gt; ' + _esc(d[:200]) + '</span>'
         body += '</div>'
 
     body += '</div>'
@@ -306,9 +307,9 @@ async def stream_turns(session_id: str):
                     "strategy": t["strategy"],
                     "result": t["result"],
                     "promising": t.get("promising", False),
-                    "diagnostics": t.get("diagnostics", [])[:3],
-                    "tactics": t.get("tactics_tried", []),
-                    "reasoning": t.get("notes", "")[:200],
+                    "diagnostics": t.get("diagnostics", [])[:5],
+                    "lean_source": t.get("lean_source", "")[:3000],
+                    "reasoning": t.get("notes", "")[:300],
                     "session_status": s["status"] if s else "unknown",
                 }
                 yield "data: " + json.dumps(data) + "\n\n"
