@@ -53,7 +53,7 @@ def _call_llm(system: str, user: str, model: str | None = None) -> str:
         raise RuntimeError("LLM_API_BASE, LLM_API_KEY, and model must be configured")
 
     url = f"{LLM_API_BASE}/chat/completions"
-    with httpx.Client(timeout=90) as client:
+    with httpx.Client(timeout=300) as client:
         resp = client.post(
             url,
             headers={
