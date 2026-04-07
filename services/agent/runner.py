@@ -118,8 +118,8 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
         name = "auto_" + hashlib.md5(stmt.encode()).hexdigest()[:8]
         stmt = f"theorem {name} : {stmt}"
 
-    # Clean tactics: strip code fences, imports, theorem declarations
-    tactics = re.sub(r"```\w*\s*", "", tactics)
+    # Clean tactics: strip ALL code fences (opening and closing), imports, declarations
+    tactics = re.sub(r"```\w*", "", tactics)  # strip ```lean4, ```tactics, ```, etc.
     lines = []
     for line in tactics.split("\n"):
         s = line.strip()
@@ -179,7 +179,7 @@ def run_turn(session_id: str) -> dict:
     db.emit_event(session_id, "planner_result", {
         "strategy": strategy,
         "reasoning": plan.get("reasoning", "")[:300],
-        "suggested_tactics": plan.get("suggested_tactics", "")[:500],
+        "suggested_tactics": plan.get("suggested_tactics", "")[:3000],
     })
 
     if strategy == "DONE":
@@ -239,7 +239,7 @@ def run_turn(session_id: str) -> dict:
         session_id=session_id,
     )
     db.emit_event(session_id, "synthesize_result", {
-        "tactics": leanstral_tactics[:500],
+        "tactics": leanstral_tactics[:3000],
     })
 
     # 4. Verify Leanstral's output
@@ -285,7 +285,7 @@ def run_turn(session_id: str) -> dict:
             session_id=session_id,
         )
         db.emit_event(session_id, "repair_result", {
-            "tactics": repaired_tactics[:500],
+            "tactics": repaired_tactics[:3000],
         })
 
         # Verify the repaired version
