@@ -167,10 +167,20 @@ def run_turn(session_id: str) -> dict:
     turn_number = db.get_turn_count(session_id) + 1
     log.info("turn_start", session_id=session_id, turn=turn_number)
 
+    # Emit turn_start event
+    db.emit_event(session_id, "turn_start", {"turn": turn_number})
+
     # 1. Plan next step
+    db.emit_event(session_id, "planner_start", {"turn": turn_number})
     plan = plan_next_step(session_id)
     strategy = plan.get("strategy_name", "unknown")
     log.info("plan", session_id=session_id, strategy=strategy)
+
+    db.emit_event(session_id, "planner_result", {
+        "strategy": strategy,
+        "reasoning": plan.get("reasoning", "")[:300],
+        "suggested_tactics": plan.get("suggested_tactics", "")[:500],
+    })
 
     if strategy == "DONE":
         return {"result": "already_verified"}
@@ -178,10 +188,15 @@ def run_turn(session_id: str) -> dict:
     # 2. Search mathlib
     all_lemmas = []
     for query in plan.get("search_queries", [])[:3]:
+        db.emit_event(session_id, "search_start", {"query": query})
         results = search_mathlib(query, top_k=5)
         for r in results:
             db.log_lemma(session_id, r["name"], r.get("statement", ""), r.get("module", ""))
             all_lemmas.append(r)
+        db.emit_event(session_id, "search_result", {
+            "query": query,
+            "results": [{"name": r["name"], "statement": r.get("statement", "")[:150]} for r in results[:3]],
+        })
 
     # 2b. Web search (if planner requested it — last resort for research)
     web_results = []
@@ -189,6 +204,10 @@ def run_turn(session_id: str) -> dict:
         results = web_search(query, count=3)
         web_results.extend(results)
         log.info("web_search", session_id=session_id, query=query, results=len(results))
+        db.emit_event(session_id, "web_search_result", {
+            "query": query,
+            "results": [{"title": r.get("title", ""), "url": r.get("url", "")} for r in results[:3]],
+        })
     # Log useful web findings as lessons
     for wr in web_results[:3]:
         db.log_lesson(
@@ -213,9 +232,14 @@ def run_turn(session_id: str) -> dict:
     tactics_options = []
     if plan.get("suggested_tactics"):
         tactics_options.append(("plan", plan["suggested_tactics"]))
+
+    db.emit_event(session_id, "synthesize_start", {"hints_len": len(hints)})
     leanstral_tactics = synthesize_tactics(session["lean_statement"], hints)
     if leanstral_tactics:
         tactics_options.append(("leanstral", leanstral_tactics))
+        db.emit_event(session_id, "synthesize_result", {
+            "tactics": leanstral_tactics[:500],
+        })
 
     # 4. Verify each option
     best_result = None
@@ -228,7 +252,21 @@ def run_turn(session_id: str) -> dict:
             session["imports"],
             tactics,
         )
+
+        db.emit_event(session_id, "verify_start", {"source": source[:3000]})
+        t0 = time.time()
         result = verify_lean(source)
+        elapsed = round(time.time() - t0, 2)
+
+        verify_diags = result.get("diagnostics", [])
+        db.emit_event(session_id, "verify_result", {
+            "success": result.get("success", False),
+            "diagnostics": [
+                (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
+                for d in verify_diags[:5]
+            ],
+            "elapsed": elapsed,
+        })
 
         if result.get("success"):
             # Check for sorry warning
@@ -252,6 +290,12 @@ def run_turn(session_id: str) -> dict:
                     notes=f"VERIFIED via {source_name}! {plan.get('reasoning', '')}",
                 )
                 db.log_strategy(session_id, strategy, plan.get("strategy_description", ""), "verified", [turn_number])
+                db.emit_event(session_id, "turn_complete", {
+                    "turn": turn_number,
+                    "result": "verified",
+                    "promising": True,
+                    "error_count": 0,
+                })
                 return {"result": "verified", "proof": source, "turn": turn_number}
 
         # Track best result (fewest errors, or partial success)
@@ -333,6 +377,18 @@ def run_turn(session_id: str) -> dict:
         new_lessons = db.auto_extract_lessons(session_id)
         if new_lessons:
             log.info("lessons_extracted", session_id=session_id, count=new_lessons)
+            db.emit_event(session_id, "lesson_learned", {
+                "lesson": "Auto-extracted lessons from repeated errors",
+                "count": new_lessons,
+            })
+
+    # Emit turn_complete event
+    db.emit_event(session_id, "turn_complete", {
+        "turn": turn_number,
+        "result": result_label,
+        "promising": promising,
+        "error_count": error_count,
+    })
 
     log.info(
         "turn_done",
@@ -382,6 +438,7 @@ def run_loop(session_id: str, max_turns: int = 1000, delay: int = TURN_DELAY_SEC
             result = run_turn(session_id)
         except Exception as e:
             log.error("turn_error", session_id=session_id, error=str(e))
+            db.emit_event(session_id, "error", {"message": str(e)[:500]})
             time.sleep(delay * 2)
             continue
 

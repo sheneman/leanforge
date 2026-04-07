@@ -261,6 +261,31 @@ def log_lesson(session_id: str, lesson: str, category: str = "technical") -> Non
     )
 
 
+def events() -> Collection:
+    return _db()["events"]
+
+
+def emit_event(session_id: str, event_type: str, data: dict) -> None:
+    """Emit a real-time event for the dashboard to stream."""
+    events().insert_one({
+        "session_id": session_id,
+        "type": event_type,  # planner_start, planner_result, search_start, search_result,
+                             # synthesize_start, synthesize_result, verify_start, verify_result,
+                             # turn_start, turn_complete, lesson_learned, web_search_result, error
+        "data": data,
+        "timestamp": datetime.now(timezone.utc),
+    })
+
+
+def get_events_since(session_id: str, since_id: str | None = None, limit: int = 50) -> list[dict]:
+    """Get events after a given ID for SSE streaming."""
+    query: dict[str, Any] = {"session_id": session_id}
+    if since_id:
+        from bson import ObjectId
+        query["_id"] = {"$gt": ObjectId(since_id)}
+    return list(events().find(query).sort("_id", 1).limit(limit))
+
+
 def get_lessons(session_id: str) -> list[dict]:
     """Get lessons, prioritizing technical/api/syntax over web_research."""
     # Get non-web lessons first (these are the important ones)
