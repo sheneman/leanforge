@@ -284,14 +284,24 @@ def synthesize_tactics(
     if not LEANSTRAL_API_MODEL:
         return "exact?", ""
 
-    # Give Leanstral a complete Lean 4 file to complete — this is how it's designed to work
+    # Give Leanstral a complete Lean 4 file to complete
     user = f"Complete the following Lean 4 proof:\n\n"
     user += f"```lean4\nimport Mathlib.Tactic\n\n{theorem_statement} := by\n  sorry\n```\n\n"
     if strategy:
         user += f"Proof strategy: {strategy}\n\n"
     if hints:
         user += f"Relevant mathlib lemmas that may help:\n{hints}\n\n"
-    user += "Replace the sorry with a complete tactic proof. Output the full proof as Lean 4 code."
+    user += "Replace the sorry with a complete tactic proof. Output the full proof as Lean 4 code.\n\n"
+    user += "INDENTATION RULES (critical for Lean 4):\n"
+    user += "- All top-level tactics (have, let, intro, apply, exact, cases, etc.) at 2-space indent\n"
+    user += "- Only indent deeper (4 spaces) INSIDE a `by` sub-block\n"
+    user += "- Sequential have/let statements are SIBLINGS at the same level, NOT nested\n"
+    user += "- Example of CORRECT indentation:\n"
+    user += "  have h1 : T1 := expr1\n"
+    user += "  have h2 : T2 := by\n"
+    user += "    tactic1\n"
+    user += "    tactic2\n"
+    user += "  exact h2\n"
 
     try:
         content, reasoning = _call_leanstral(user)
@@ -331,7 +341,11 @@ def repair_tactics(
     user += "Compiler errors:\n"
     for d in diagnostics[:5]:
         user += f"  - {d}\n"
-    user += "\nWrite a corrected complete proof. Fix the errors above. Output the full Lean 4 code."
+    user += "\nWrite a corrected complete proof. Fix the errors above. Output the full Lean 4 code.\n"
+    user += "\nINDENTATION RULES (critical):\n"
+    user += "- All top-level tactics at 2-space indent\n"
+    user += "- Only indent deeper (4 spaces) INSIDE a `by` sub-block\n"
+    user += "- Sequential have/let are SIBLINGS at same level, NOT nested\n"
 
     try:
         content, reasoning = _call_leanstral(user)
