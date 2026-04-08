@@ -1311,6 +1311,44 @@ function renderEvent(evt) {{
       div.innerHTML = time + 'Lessons extracted: ' + esc(d.lesson || '') + ' (+' + (d.count||0) + ')';
       break;
 
+    case 'creativity_start':
+      div.className = 'evt';
+      div.innerHTML = time + '<span style="color:var(--purple);">&#10024; Creative brainstorm...</span>';
+      break;
+
+    case 'creativity_thinking':
+      div.className = 'evt';
+      div.innerHTML = time + '<details><summary style="color:var(--purple);cursor:pointer">&#10024; Creative reasoning (click to expand)</summary><div class="evt-reasoning">' + esc(d.reasoning || '') + '</div></details>';
+      break;
+
+    case 'creativity_ideas':
+      div.className = 'evt';
+      let ch = time + '<span style="color:var(--purple);font-weight:600;">&#10024; Creative Ideas:</span>';
+      for (const idea of (d.ideas || [])) {{
+        ch += '<br>&nbsp;&nbsp;&#9679; <b>' + esc(idea.title || '') + '</b>: ' + esc(idea.insight || '');
+      }}
+      div.innerHTML = ch;
+      break;
+
+    case 'diagnosis':
+      div.className = 'evt';
+      let dh = time + '<span style="color:var(--yellow);font-weight:600;">&#128269; Diagnosis:</span>';
+      if (d.root_cause) dh += '<br>&nbsp;&nbsp;Root cause: ' + esc(d.root_cause);
+      if (d.fix) dh += '<br>&nbsp;&nbsp;Fix: ' + esc(d.fix);
+      if (d.lesson) dh += '<br>&nbsp;&nbsp;Lesson: ' + esc(d.lesson);
+      div.innerHTML = dh;
+      break;
+
+    case 'diagnosis_thinking':
+      div.className = 'evt';
+      div.innerHTML = time + '<details><summary style="color:var(--yellow);cursor:pointer">&#128269; Diagnosis reasoning (click to expand)</summary><div class="evt-reasoning">' + esc(d.reasoning || '') + '</div></details>';
+      break;
+
+    case 'exact_suggestion':
+      div.className = 'evt';
+      div.innerHTML = time + '<span style="color:var(--green);">&#9889; Applied exact? suggestion</span>';
+      break;
+
     case 'error':
       div.className = 'evt evt-error';
       div.innerHTML = time + 'Error: ' + esc(d.message || '');

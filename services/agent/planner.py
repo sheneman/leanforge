@@ -232,6 +232,132 @@ def _parse_structured_response(raw: str) -> dict:
     return plan
 
 
+CREATIVITY_SYSTEM = """\
+You are a creative mathematical problem-solver and proof strategist. \
+Your job is NOT to write Lean code — it's to think deeply and laterally \
+about how a theorem might be proved.
+
+You bring fresh perspectives by:
+1. DECOMPOSING: Can the problem be split into simpler sub-problems?
+2. ANALOGIES: What similar theorems exist? What proof techniques worked for those?
+3. REFRAMING: Can the statement be reformulated in an equivalent but easier-to-prove way?
+4. CONNECTIONS: What areas of mathematics connect to this problem? Group theory, \
+   number theory, combinatorics — what bridges exist?
+5. SIMPLIFICATION: Is there a known one-liner in Mathlib that solves this directly? \
+   What's the laziest possible proof?
+6. OBSTACLES: Why have previous approaches failed? What's the REAL blocker — is it \
+   a type mismatch, a missing conversion, a wrong lemma, or a fundamental approach problem?
+
+Think like a mathematician who has seen thousands of proofs. What patterns apply here?
+
+Respond with 2-4 IDEAS, each in this format:
+
+IDEA: <short title>
+INSIGHT: <the key mathematical or technical insight, 2-4 sentences>
+SEARCH: <a mathlib search query that might find relevant lemmas, or NONE>
+"""
+
+
+def creative_brainstorm(session_id: str) -> list[dict]:
+    """Ask the creativity agent for fresh ideas about the proof problem.
+
+    Called periodically (every N turns) or when the system is stuck.
+    Returns a list of ideas that get stored and fed to the planner.
+    """
+    ctx = build_context(session_id)
+
+    if ctx["status"] == "verified":
+        return []
+
+    # Build a richer context for creative thinking
+    lines = [
+        f"## Theorem to prove\n{ctx['problem']}",
+        f"\n## Formal Lean 4 statement\n{ctx['lean_statement']}",
+        f"\n## Attempts so far: {ctx['total_turns']} turns",
+    ]
+
+    if ctx["dead_ends"]:
+        lines.append(f"\n## What has NOT worked ({len(ctx['dead_ends'])} dead ends)")
+        for de in ctx["dead_ends"][:10]:
+            lines.append(f"  - {de}")
+
+    if ctx.get("lessons"):
+        lines.append(f"\n## What we've learned")
+        for lesson in ctx["lessons"][:10]:
+            lines.append(f"  - {lesson}")
+
+    if ctx["best_partial_proof"]:
+        lines.append(f"\n## Closest attempt so far\n{ctx['best_partial_proof'][:800]}")
+
+    if ctx["lemmas_found"]:
+        lines.append(f"\n## Lemmas discovered in Mathlib")
+        for l in ctx["lemmas_found"][:10]:
+            lines.append(f"  - {l['name']}: {l['statement']}")
+
+    if ctx["promising_strategies"]:
+        lines.append(f"\n## Promising directions that showed partial success")
+        for ps in ctx["promising_strategies"][:5]:
+            lines.append(f"  - {ps['name']}: {ps['description']}")
+
+    lines.append(
+        f"\n## Your task\n"
+        f"Think creatively about how to prove this. The system has tried "
+        f"{ctx['total_turns']} approaches and is stuck. What fresh angles, "
+        f"connections, or simplifications might break through?"
+    )
+
+    prompt = "\n".join(lines)
+    log.info("creativity_prompt", session_id=session_id, prompt_len=len(prompt))
+
+    raw, reasoning = _call_llm(CREATIVITY_SYSTEM, prompt, model=PLANNER_MODEL)
+    log.info("creativity_response", session_id=session_id, response_len=len(raw))
+
+    if reasoning:
+        from services.agent.db import emit_event
+        emit_event(session_id, "creativity_thinking", {
+            "reasoning": reasoning[:5000],
+        })
+
+    # Parse ideas
+    raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
+    ideas = []
+    idea_blocks = re.split(r"\nIDEA:\s*", "\n" + raw)
+    for block in idea_blocks[1:]:  # skip text before first IDEA
+        idea: dict = {}
+        # Title is the first line
+        title_match = re.match(r"(.+?)(?:\n|$)", block)
+        idea["title"] = title_match.group(1).strip()[:100] if title_match else "Untitled"
+
+        # Extract INSIGHT
+        m = re.search(r"INSIGHT:\s*(.+?)(?:\nSEARCH:|$)", block, re.DOTALL)
+        idea["insight"] = m.group(1).strip()[:500] if m else ""
+
+        # Extract SEARCH
+        m = re.search(r"SEARCH:\s*(.+?)(?:\n|$)", block)
+        q = m.group(1).strip() if m else ""
+        idea["search_query"] = q if q.upper() != "NONE" else ""
+
+        if idea["insight"]:
+            ideas.append(idea)
+
+    log.info("creativity_ideas", session_id=session_id, count=len(ideas))
+
+    # Store ideas as events and as lessons for the planner
+    from services.agent.db import emit_event, log_lesson
+    emit_event(session_id, "creativity_ideas", {
+        "ideas": [{"title": i["title"], "insight": i["insight"][:200]} for i in ideas],
+    })
+
+    for idea in ideas[:4]:
+        log_lesson(
+            session_id,
+            f"Creative idea — {idea['title']}: {idea['insight'][:300]}",
+            category="creative",
+        )
+
+    return ideas
+
+
 def plan_next_step(session_id: str) -> dict:
     """Query MongoDB for session context, ask the LLM for the next strategy."""
     ctx = build_context(session_id)

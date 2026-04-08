@@ -34,7 +34,7 @@ load_dotenv()
 
 # Must import after load_dotenv so env vars are available
 from services.agent import db
-from services.agent.planner import plan_next_step, synthesize_tactics, repair_tactics, diagnose_failure
+from services.agent.planner import plan_next_step, synthesize_tactics, repair_tactics, diagnose_failure, creative_brainstorm
 
 log = structlog.get_logger()
 
@@ -511,6 +511,24 @@ def run_turn(session_id: str) -> dict:
     # Emit turn_start event
     db.emit_event(session_id, "turn_start", {"turn": turn_number})
 
+    # 0. Creativity agent — runs every 5 turns or on turn 1 to inject fresh ideas
+    if turn_number == 1 or turn_number % 5 == 0:
+        try:
+            db.emit_event(session_id, "creativity_start", {"turn": turn_number})
+            ideas = creative_brainstorm(session_id)
+            # Feed any search queries from creative ideas into the turn
+            creative_searches = [
+                i["search_query"] for i in ideas
+                if i.get("search_query")
+            ]
+            log.info("creativity_done", session_id=session_id,
+                     ideas=len(ideas), searches=len(creative_searches))
+        except Exception as e:
+            log.warning("creativity_failed", error=str(e))
+            creative_searches = []
+    else:
+        creative_searches = []
+
     # 1. Plan next step
     db.emit_event(session_id, "planner_start", {"turn": turn_number})
     plan = plan_next_step(session_id)
@@ -526,9 +544,12 @@ def run_turn(session_id: str) -> dict:
     if strategy == "DONE":
         return {"result": "already_verified"}
 
-    # 2. Search mathlib
+    # 2. Search mathlib (planner queries + creative agent queries)
     all_lemmas = []
-    for query in plan.get("search_queries", [])[:3]:
+    search_queries = plan.get("search_queries", [])[:3]
+    if creative_searches:
+        search_queries = search_queries + creative_searches[:2]
+    for query in search_queries:
         db.emit_event(session_id, "search_start", {"query": query})
         results = search_mathlib(query, top_k=5)
         for r in results:
