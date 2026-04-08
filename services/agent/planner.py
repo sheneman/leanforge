@@ -316,26 +316,22 @@ def synthesize_tactics(
     and uses them directly.
     """
     # Build the Lean file with context
-    # Collect imports from lemma modules
-    imports = {"Mathlib.Tactic"}
-    if lemmas:
-        for lem in (lemmas or [])[:10]:
-            mod = lem.get("module", "")
-            if mod and mod.startswith("Mathlib."):
-                imports.add(mod)
-
-    lines = [f"import {imp}" for imp in sorted(imports)]
-    lines.append("")
+    # Start with Mathlib.Tactic only — the model adds specific imports if needed.
+    # Don't auto-add from retrieval modules — some may not be built in the container.
+    lines = ["import Mathlib.Tactic", ""]
     if strategy:
         lines.append(f"-- Proof strategy: {strategy}")
         lines.append("")
     if lemmas:
         lines.append("-- The following lemmas exist in Mathlib and SHOULD be used:")
         lines.append("-- Use the EXACT fully-qualified names shown here.")
+        lines.append("-- Add 'import <module>' if needed (module shown in brackets).")
         for lem in (lemmas or [])[:10]:
             name = lem.get("name", "")
             stmt = lem.get("statement", "")  # Full signature, no truncation
-            lines.append(f"-- {name} : {stmt}")
+            mod = lem.get("module", "")
+            mod_note = f"  [from {mod}]" if mod else ""
+            lines.append(f"-- {name} : {stmt}{mod_note}")
         lines.append("")
     lines.append(f"{theorem_statement} := by")
     lines.append("  sorry")
