@@ -361,7 +361,9 @@ def auto_extract_lessons(session_id: str) -> int:
                 lesson_text = text
                 break
         if not lesson_text:
-            lesson_text = f"Repeated error: {diag[:150]}"
+            # Generic "Repeated error: X" lessons are noise — skip them.
+            # Only log lessons that match known patterns with actionable fixes.
+            continue
 
         # Log as session lesson
         existing = lessons().find_one({
@@ -372,7 +374,7 @@ def auto_extract_lessons(session_id: str) -> int:
             log_lesson(session_id, lesson_text, category="auto_extracted")
             new_count += 1
 
-        # Promote to global if seen 5+ times (across this or any session)
+        # Promote to global if seen 5+ times — but only mapped lessons (not raw errors)
         if item["count"] >= 5:
             log_lesson(session_id, lesson_text, category="auto_extracted", global_lesson=True)
 
