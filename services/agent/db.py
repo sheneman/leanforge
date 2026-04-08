@@ -317,13 +317,8 @@ def get_lessons(session_id: str) -> list[dict]:
             seen.add(text)
             result.append(l)
 
-    # Add a few web research results
-    web = list(lessons().find(
-        {"session_id": session_id, "category": "web_research"}
-    ).sort("hit_count", DESCENDING).limit(3))
-    for l in web:
-        if l["lesson"] not in seen:
-            result.append(l)
+    # Web research lessons are excluded — they contain noisy snippets
+    # (Lean 3 syntax, generic tutorials) that mislead the planner.
 
     return result[:20]
 

@@ -72,7 +72,7 @@ def web_search(query: str, count: int = 5) -> list[dict]:
         with httpx.Client(timeout=15) as client:
             resp = client.get(
                 "https://api.search.brave.com/res/v1/web/search",
-                params={"q": query, "count": count},
+                params={"q": f"{query} Lean 4 Mathlib4", "count": count + 3},
                 headers={
                     "Accept": "application/json",
                     "X-Subscription-Token": BRAVE_API_KEY,
@@ -80,14 +80,23 @@ def web_search(query: str, count: int = 5) -> list[dict]:
             )
             resp.raise_for_status()
             results = resp.json().get("web", {}).get("results", [])
-            return [
-                {
-                    "title": r.get("title", ""),
-                    "url": r.get("url", ""),
+            # Filter out Lean 3 docs — they use incompatible syntax
+            lean3_markers = ["mathlib3 docs", "mathlib_docs", "leanprover-community.github.io/mathlib_docs"]
+            filtered = []
+            for r in results:
+                url = r.get("url", "")
+                title = r.get("title", "")
+                if any(m in url or m in title for m in lean3_markers):
+                    log.info("web_search_filtered_lean3", url=url)
+                    continue
+                filtered.append({
+                    "title": title,
+                    "url": url,
                     "description": r.get("description", "")[:300],
-                }
-                for r in results[:count]
-            ]
+                })
+                if len(filtered) >= count:
+                    break
+            return filtered
     except Exception as e:
         log.warning("web_search_failed", error=str(e))
         return []
@@ -434,13 +443,8 @@ def run_turn(session_id: str) -> dict:
             "query": query,
             "results": [{"title": r.get("title", ""), "url": r.get("url", "")} for r in results[:3]],
         })
-    # Log useful web findings as lessons
-    for wr in web_results[:3]:
-        db.log_lesson(
-            session_id,
-            f"Web research: {wr['title'][:100]} — {wr['description'][:150]}",
-            category="web_research",
-        )
+    # Log web findings as events only — NOT as lessons.
+    # Web snippets are noisy (Lean 3 docs, tutorials) and pollute the lesson pool.
 
     # 3. Synthesize tactics via Leanstral (ALL code generation goes through Leanstral)
     strategy_desc = plan.get("strategy_description", "")
@@ -449,10 +453,9 @@ def run_turn(session_id: str) -> dict:
         lemma_hints = "\n".join(
             f"  {l['name']}: {l.get('statement', '')[:150]}" for l in all_lemmas[:10]
         )
-    if web_results:
-        lemma_hints += "\nWeb research:\n" + "\n".join(
-            f"  {wr['title'][:80]}: {wr['description'][:150]}" for wr in web_results[:3]
-        )
+    # Do NOT feed web search snippets to the code synthesizer.
+    # Web results often contain Lean 3 syntax or generic tutorials
+    # that cause hallucinated/invalid Lean 4 code.
 
     db.emit_event(session_id, "synthesize_start", {
         "strategy": strategy_desc[:300],
