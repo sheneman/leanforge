@@ -49,6 +49,70 @@ REASONING: <why this might work given past failures, 1-2 sentences>
 """
 
 
+_TACTIC_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "lean_proof",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "tactics": {
+                    "type": "string",
+                    "description": "ONLY the tactic lines after := by. No imports. No theorem. No comments. Just tactics.",
+                }
+            },
+            "required": ["tactics"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def _call_llm_structured(system: str, user: str, model: str | None = None) -> tuple[str, str]:
+    """Call LLM with structured JSON output to get clean tactic code.
+
+    Returns (tactics, reasoning_trace).
+    """
+    model = model or LEANSTRAL_API_MODEL
+    if not LLM_API_BASE or not LLM_API_KEY or not model:
+        raise RuntimeError("LLM_API_BASE, LLM_API_KEY, and model must be configured")
+
+    url = f"{LLM_API_BASE}/chat/completions"
+    with httpx.Client(timeout=300) as client:
+        resp = client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": 8192,
+                "temperature": 0.4,
+                "response_format": _TACTIC_SCHEMA,
+            },
+        )
+        resp.raise_for_status()
+        msg = resp.json()["choices"][0]["message"]
+        content = msg.get("content") or ""
+        reasoning = msg.get("reasoning_content") or ""
+
+        # Parse the JSON to extract tactics
+        try:
+            parsed = json.loads(content)
+            tactics = parsed.get("tactics", "")
+        except (json.JSONDecodeError, TypeError):
+            # If structured output failed, fall back to raw content
+            tactics = content
+
+        return tactics, reasoning
+
+
 def _call_llm(system: str, user: str, model: str | None = None) -> tuple[str, str]:
     """Call the LLM API and return (content, reasoning_trace).
 
@@ -269,13 +333,13 @@ def synthesize_tactics(
     )
 
     try:
-        content, reasoning = _call_llm(system, user, model=LEANSTRAL_API_MODEL)
+        tactics, reasoning = _call_llm_structured(system, user, model=LEANSTRAL_API_MODEL)
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "synthesize_thinking", {
                 "reasoning": reasoning[:3000],
             })
-        return content, reasoning
+        return tactics, reasoning
     except Exception as e:
         log.error("synthesize_failed", error=str(e))
         return "exact?", ""
@@ -313,13 +377,13 @@ def repair_tactics(
     )
 
     try:
-        content, reasoning = _call_llm(system, user, model=LEANSTRAL_API_MODEL)
+        tactics, reasoning = _call_llm_structured(system, user, model=LEANSTRAL_API_MODEL)
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "repair_thinking", {
                 "reasoning": reasoning[:3000],
             })
-        return content, reasoning
+        return tactics, reasoning
     except Exception as e:
         log.error("repair_failed", error=str(e))
         return "exact?", ""
