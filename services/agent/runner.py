@@ -189,47 +189,60 @@ def _clean_leanstral_output(raw: str) -> str:
     return result if result else "sorry"
 
 
+_TOP_LEVEL_TACTICS = re.compile(
+    r"^(have|let|show|suffices|obtain|intro|apply|exact|rw|simp|"
+    r"cases|rcases|induction|by_cases|constructor|use|refine|"
+    r"calc|match|omega|linarith|ring|norm_num|aesop|trivial|"
+    r"decide|tauto|sorry|haveI|letI|·|--|\|)\b"
+)
+
+_CONTINUATION_STARTERS = re.compile(
+    r"^(·|\|)"
+)
+
+
 def _normalize_tactic_indentation(tactics: str, base_indent: int = 2) -> str:
-    """Normalize tactic indentation to consistent 2-space levels.
+    """Normalize tactic indentation using original indent as structure guide.
 
-    LLMs produce inconsistent indentation (mixed 2/4/6 spaces).
-    This normalizer:
-    1. Strips the common leading whitespace (dedent)
-    2. Converts all indentation to 2-space multiples
-    3. Ensures everything is inside the 'by' block (base_indent spaces)
-
-    Preserves relative indentation structure — deeper blocks stay deeper.
+    Uses the original indentation to determine relative block depth,
+    mapping to clean 2-space levels. Key insight: track which original
+    indent levels correspond to which blocks, and use that to detect
+    block boundaries.
     """
     lines = tactics.split("\n")
 
-    # Find minimum indentation of non-blank lines
+    # Find the minimum indentation (= the top-level of the tactic block)
     min_indent = 999
     for line in lines:
         if line.strip():
-            leading = len(line) - len(line.lstrip())
-            min_indent = min(min_indent, leading)
+            min_indent = min(min_indent, len(line) - len(line.lstrip()))
     if min_indent == 999:
         min_indent = 0
 
-    # Normalize: strip common prefix, convert to 2-space levels
+    # Map original indentation to depth levels
+    # Collect all unique indent levels and sort them
+    indent_levels: list[int] = sorted(set(
+        len(line) - len(line.lstrip())
+        for line in lines if line.strip()
+    ))
+
+    # Create mapping: original indent → depth
+    indent_to_depth: dict[int, int] = {}
+    for i, level in enumerate(indent_levels):
+        indent_to_depth[level] = i
+
     result: list[str] = []
     for line in lines:
         if not line.strip():
             result.append("")
             continue
 
-        leading = len(line) - len(line.lstrip())
         content = line.lstrip()
+        original_indent = len(line) - len(line.lstrip())
 
-        # Calculate relative depth from the minimum
-        relative = leading - min_indent
-
-        # Convert to 2-space levels: round to nearest 2
-        # e.g., 3 spaces → 2, 5 spaces → 4, 7 spaces → 6
-        normalized_depth = ((relative + 1) // 2) * 2
-
-        # Add base indentation (inside the 'by' block)
-        total_indent = base_indent + normalized_depth
+        # Look up the depth for this indent level
+        depth = indent_to_depth.get(original_indent, 0)
+        total_indent = base_indent + depth * 2
 
         result.append(" " * total_indent + content)
 
