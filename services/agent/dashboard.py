@@ -155,6 +155,24 @@ async def api_stop_session(session_id: str):
     return JSONResponse({"session_id": session_id, "status": "abandoned"})
 
 
+@app.delete("/api/sessions/{session_id}")
+async def api_delete_session(session_id: str):
+    from services.agent import db as agent_db
+    s = agent_db.get_session(session_id)
+    if not s:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    # Stop if running
+    agent_db.update_session(session_id, status="abandoned")
+    # Delete all related data
+    agent_db.turns().delete_many({"session_id": session_id})
+    agent_db.strategies().delete_many({"session_id": session_id})
+    agent_db.lemmas().delete_many({"session_id": session_id})
+    agent_db.lessons().delete_many({"session_id": session_id})
+    agent_db.events().delete_many({"session_id": session_id})
+    agent_db.sessions().delete_one({"_id": session_id})
+    return JSONResponse({"session_id": session_id, "status": "deleted"})
+
+
 @app.post("/api/sessions/{session_id}/resume")
 async def api_resume_session(session_id: str):
     from services.agent import db as agent_db
@@ -728,6 +746,7 @@ body {{
 .action-btns button:hover {{ background: var(--border); }}
 .action-btns .stop-btn {{ border-color: var(--red); color: var(--red); }}
 .action-btns .resume-btn {{ border-color: var(--green); color: var(--green); }}
+.action-btns .delete-btn {{ border-color: #888; color: #888; font-size: 0.8em; }}
 
 .lesson-list {{
   max-height: 300px;
@@ -1016,6 +1035,9 @@ function renderRightSidebar(s) {{
   }} else if (s.status !== 'verified') {{
     html += '<button class="resume-btn" onclick="resumeSession(\\''+esc(s.session_id)+'\\')">Resume</button>';
   }}
+  if (!isRunning) {{
+    html += '<button class="delete-btn" onclick="deleteSession(\\''+esc(s.session_id)+'\\')">Delete</button>';
+  }}
   html += '</div></div>';
 
   // Strategies
@@ -1076,6 +1098,14 @@ async function stopSession(sid) {{
 async function resumeSession(sid) {{
   await fetch(PREFIX + '/api/sessions/' + encodeURIComponent(sid) + '/resume', {{method:'POST'}});
   await loadSessionDetail(sid);
+  await loadSessions();
+}}
+
+async function deleteSession(sid) {{
+  if (!confirm('Delete session ' + sid + '? This removes all turns, lessons, and events.')) return;
+  await fetch(PREFIX + '/api/sessions/' + encodeURIComponent(sid), {{method:'DELETE'}});
+  document.getElementById('session-detail').innerHTML = '<div class="placeholder">Select a session</div>';
+  document.getElementById('event-stream').innerHTML = '';
   await loadSessions();
 }}
 
