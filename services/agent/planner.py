@@ -49,34 +49,19 @@ REASONING: <why this might work given past failures, 1-2 sentences>
 """
 
 
-_TACTIC_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "lean_proof",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "tactics": {
-                    "type": "string",
-                    "description": "ONLY the tactic lines after := by. No imports. No theorem. No comments. Just tactics.",
-                }
-            },
-            "required": ["tactics"],
-            "additionalProperties": False,
-        },
-    },
-}
+def _call_leanstral(user: str) -> tuple[str, str]:
+    """Call Leanstral using its recommended settings.
 
+    Leanstral is a Lean 4 proof generation model by Mistral. Key settings:
+    - temperature=1.0 (recommended by Mistral docs)
+    - Full proof output (not constrained to tactics-only)
+    - No structured output (let it generate natural Lean code)
+    - max_tokens=16384 (proofs can be long)
 
-def _call_llm_structured(system: str, user: str, model: str | None = None) -> tuple[str, str]:
-    """Call LLM with structured JSON output to get clean tactic code.
-
-    Returns (tactics, reasoning_trace).
+    Returns (content, reasoning_trace).
     """
-    model = model or LEANSTRAL_API_MODEL
-    if not LLM_API_BASE or not LLM_API_KEY or not model:
-        raise RuntimeError("LLM_API_BASE, LLM_API_KEY, and model must be configured")
+    if not LLM_API_BASE or not LLM_API_KEY or not LEANSTRAL_API_MODEL:
+        raise RuntimeError("LLM_API_BASE, LLM_API_KEY, and LEANSTRAL_API_MODEL must be configured")
 
     url = f"{LLM_API_BASE}/chat/completions"
     with httpx.Client(timeout=300) as client:
@@ -87,30 +72,21 @@ def _call_llm_structured(system: str, user: str, model: str | None = None) -> tu
                 "Content-Type": "application/json",
             },
             json={
-                "model": model,
+                "model": LEANSTRAL_API_MODEL,
                 "messages": [
-                    {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                "max_tokens": 8192,
-                "temperature": 0.4,
-                "response_format": _TACTIC_SCHEMA,
+                "max_tokens": 16384,
+                "temperature": 1.0,
             },
         )
         resp.raise_for_status()
         msg = resp.json()["choices"][0]["message"]
         content = msg.get("content") or ""
         reasoning = msg.get("reasoning_content") or ""
-
-        # Parse the JSON to extract tactics
-        try:
-            parsed = json.loads(content)
-            tactics = parsed.get("tactics", "")
-        except (json.JSONDecodeError, TypeError):
-            # If structured output failed, fall back to raw content
-            tactics = content
-
-        return tactics, reasoning
+        if not content and reasoning:
+            content = reasoning
+        return content, reasoning
 
 
 def _call_llm(system: str, user: str, model: str | None = None) -> tuple[str, str]:
@@ -308,38 +284,25 @@ def synthesize_tactics(
     if not LEANSTRAL_API_MODEL:
         return "exact?", ""
 
-    user = f"Prove this Lean 4 theorem: {theorem_statement}\n"
+    # Give Leanstral a complete Lean 4 file to complete — this is how it's designed to work
+    user = f"Complete the following Lean 4 proof:\n\n"
+    user += f"```lean4\nimport Mathlib.Tactic\n\n{theorem_statement} := by\n  sorry\n```\n\n"
     if strategy:
-        user += f"\nStrategy: {strategy}\n"
+        user += f"Proof strategy: {strategy}\n\n"
     if hints:
-        user += f"\nUSE THESE LEMMAS (they exist in mathlib — apply them directly):\n{hints}\n"
-        user += "\nCRITICAL: The lemmas above are REAL and EXIST in mathlib. Use them with exact/apply. "
-        user += "Do NOT reprove from scratch what mathlib already provides. "
-        user += "A short proof using existing lemmas is ALWAYS better than a long proof from first principles.\n"
-    user += "\nRules:"
-    user += "\n- Output ONLY tactic code. No text, no explanation, no code fences."
-    user += "\n- Keep it SHORT. Prefer 1-5 lines using existing lemmas over 20+ lines from scratch."
-    user += "\n- If a lemma from the list above directly solves the goal, just use: exact <lemma> <args>"
-    user += "\n- Do NOT use introN. Use 'intro a b c'."
-    user += "\n- Do NOT use ⟨⟩ angle brackets. Use 'obtain' or 'have' for destructuring."
-
-    system = (
-        "You are a Lean 4 tactic generator. You output ONLY Lean 4 tactic code. "
-        "NEVER output natural language, explanations, markdown, or code fences. "
-        "NEVER reprove things that exist in mathlib — use exact/apply with the given lemmas. "
-        "Keep proofs SHORT. 1-5 lines is ideal. "
-        "If exact? or apply? would work, use them. "
-        "Output raw tactics only — the caller will wrap them in 'theorem ... := by'."
-    )
+        user += f"Relevant mathlib lemmas that may help:\n{hints}\n\n"
+    user += "Replace the sorry with a complete tactic proof. Output the full proof as Lean 4 code."
 
     try:
-        tactics, reasoning = _call_llm_structured(system, user, model=LEANSTRAL_API_MODEL)
+        content, reasoning = _call_leanstral(user)
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "synthesize_thinking", {
                 "reasoning": reasoning[:3000],
             })
-        return tactics, reasoning
+        # Leanstral returns full Lean code — the runner's _clean_leanstral_output
+        # will extract just the tactics from the complete proof
+        return content, reasoning
     except Exception as e:
         log.error("synthesize_failed", error=str(e))
         return "exact?", ""
@@ -359,31 +322,25 @@ def repair_tactics(
     if not LEANSTRAL_API_MODEL:
         return "exact?", ""
 
-    user = f"Theorem: {theorem_statement}\n\n"
-    user += f"These tactics FAILED:\n{failed_tactics[:1000]}\n\n"
-    user += f"Errors:\n"
+    # Give Leanstral the failed proof with errors and ask for a complete new proof
+    user = f"The following Lean 4 proof failed to compile:\n\n"
+    user += f"```lean4\nimport Mathlib.Tactic\n\n{theorem_statement} := by\n"
+    for line in failed_tactics[:1500].split("\n"):
+        user += f"  {line}\n"
+    user += "```\n\n"
+    user += "Compiler errors:\n"
     for d in diagnostics[:5]:
         user += f"  - {d}\n"
-    user += "\nWrite a COMPLETELY NEW proof. Do NOT patch the failed one — try a different approach."
-    user += "\nKeep it SHORT (1-10 lines). Use exact/apply with mathlib lemmas."
-    user += "\nIf the previous proof was too long, that was the problem. Make it shorter."
-    user += "\nOutput ONLY raw tactic code. No text, no fences, no explanation."
-
-    system = (
-        "You are a Lean 4 tactic generator. Output ONLY raw Lean 4 tactic code. "
-        "NEVER output natural language or code fences. "
-        "When repairing, write a COMPLETELY NEW short proof rather than patching the broken one. "
-        "Prefer exact/apply with existing mathlib lemmas. Keep it under 10 lines."
-    )
+    user += "\nWrite a corrected complete proof. Fix the errors above. Output the full Lean 4 code."
 
     try:
-        tactics, reasoning = _call_llm_structured(system, user, model=LEANSTRAL_API_MODEL)
+        content, reasoning = _call_leanstral(user)
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "repair_thinking", {
                 "reasoning": reasoning[:3000],
             })
-        return tactics, reasoning
+        return content, reasoning
     except Exception as e:
         log.error("repair_failed", error=str(e))
         return "exact?", ""
