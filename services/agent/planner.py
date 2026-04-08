@@ -246,20 +246,26 @@ def synthesize_tactics(
 
     user = f"Prove this Lean 4 theorem: {theorem_statement}\n"
     if strategy:
-        user += f"\nProof strategy to follow: {strategy}\n"
+        user += f"\nStrategy: {strategy}\n"
     if hints:
-        user += f"\nRelevant mathlib lemmas:\n{hints}\n"
-    user += "\nReturn ONLY valid Lean 4 tactic-mode proof body (the part after := by)."
-    user += "\nNo imports, no theorem declaration, no code fences, no explanation."
-    user += "\nUse only valid Lean 4 syntax. Do NOT use introN (use 'intro a b c' instead)."
+        user += f"\nUSE THESE LEMMAS (they exist in mathlib — apply them directly):\n{hints}\n"
+        user += "\nCRITICAL: The lemmas above are REAL and EXIST in mathlib. Use them with exact/apply. "
+        user += "Do NOT reprove from scratch what mathlib already provides. "
+        user += "A short proof using existing lemmas is ALWAYS better than a long proof from first principles.\n"
+    user += "\nRules:"
+    user += "\n- Output ONLY tactic code. No text, no explanation, no code fences."
+    user += "\n- Keep it SHORT. Prefer 1-5 lines using existing lemmas over 20+ lines from scratch."
+    user += "\n- If a lemma from the list above directly solves the goal, just use: exact <lemma> <args>"
+    user += "\n- Do NOT use introN. Use 'intro a b c'."
+    user += "\n- Do NOT use ⟨⟩ angle brackets. Use 'obtain' or 'have' for destructuring."
 
     system = (
-        "You are a Lean 4 proof-synthesis expert. "
-        "You write ONLY valid Lean 4 tactic-mode proofs. "
-        "Return ONLY the tactics that go after ':= by'. "
-        "No imports, no 'theorem' line, no code fences, no explanation. "
-        "Use only Lean 4 syntax — NOT Lean 3. "
-        "introN does not exist in Lean 4 — use 'intro a b c' instead."
+        "You are a Lean 4 tactic generator. You output ONLY Lean 4 tactic code. "
+        "NEVER output natural language, explanations, markdown, or code fences. "
+        "NEVER reprove things that exist in mathlib — use exact/apply with the given lemmas. "
+        "Keep proofs SHORT. 1-5 lines is ideal. "
+        "If exact? or apply? would work, use them. "
+        "Output raw tactics only — the caller will wrap them in 'theorem ... := by'."
     )
 
     try:
@@ -289,23 +295,21 @@ def repair_tactics(
     if not LEANSTRAL_API_MODEL:
         return "exact?", ""
 
-    user = f"Fix this Lean 4 proof that failed to compile.\n\n"
-    user += f"Theorem: {theorem_statement}\n\n"
-    user += f"Failed tactics:\n{failed_tactics}\n\n"
-    user += f"Lean compiler errors:\n"
+    user = f"Theorem: {theorem_statement}\n\n"
+    user += f"These tactics FAILED:\n{failed_tactics[:1000]}\n\n"
+    user += f"Errors:\n"
     for d in diagnostics[:5]:
         user += f"  - {d}\n"
-    user += "\nReturn ONLY the corrected tactic-mode proof body."
-    user += "\nNo imports, no theorem declaration, no code fences, no explanation."
-    user += "\nFix the specific errors above. Use only valid Lean 4 syntax."
+    user += "\nWrite a COMPLETELY NEW proof. Do NOT patch the failed one — try a different approach."
+    user += "\nKeep it SHORT (1-10 lines). Use exact/apply with mathlib lemmas."
+    user += "\nIf the previous proof was too long, that was the problem. Make it shorter."
+    user += "\nOutput ONLY raw tactic code. No text, no fences, no explanation."
 
     system = (
-        "You are a Lean 4 proof repair expert. "
-        "You fix proofs that failed to compile. "
-        "Read the error messages carefully and fix the specific issues. "
-        "Return ONLY the corrected tactics after ':= by'. "
-        "No imports, no 'theorem' line, no code fences. "
-        "Use only Lean 4 syntax — NOT Lean 3."
+        "You are a Lean 4 tactic generator. Output ONLY raw Lean 4 tactic code. "
+        "NEVER output natural language or code fences. "
+        "When repairing, write a COMPLETELY NEW short proof rather than patching the broken one. "
+        "Prefer exact/apply with existing mathlib lemmas. Keep it under 10 lines."
     )
 
     try:
