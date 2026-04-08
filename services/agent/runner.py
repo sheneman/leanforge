@@ -272,7 +272,31 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
     parts.append(f"{stmt} := by")
     parts.append(tactics)
     parts.append("")
-    return "\n".join(parts)
+    source = "\n".join(parts)
+
+    # Run lean-fmt as a final pass if available (normalizes spacing, operators)
+    source = _run_lean_fmt(source)
+
+    return source
+
+
+def _run_lean_fmt(source: str) -> str:
+    """Run lean-fmt on the source if available. Returns original if lean-fmt fails."""
+    import subprocess
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".lean", delete=False) as f:
+            f.write(source)
+            f.flush()
+            result = subprocess.run(
+                ["lean-fmt", f.name],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        pass
+    return source
 
 
 # ---------------------------------------------------------------------------
