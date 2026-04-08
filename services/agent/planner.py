@@ -44,7 +44,9 @@ STRATEGY: <short name, 3-8 words>
 DESCRIPTION: <detailed description of the proof approach — which lemmas to use, \
 what case splits to make, what induction scheme to follow, etc. 2-5 sentences.>
 SEARCH: <mathlib search query to find relevant lemmas>
-WEB_SEARCH: <optional web search query, or NONE>
+WEB_SEARCH: <optional web search query targeting Lean 4 / Mathlib4 docs ONLY, or NONE. \
+Do NOT search for Lean 3 or general math. Only use when the FAISS retrieval search \
+returned nothing useful. Example: "Mathlib4 IsPGroup commutative card prime squared">
 REASONING: <why this might work given past failures, 1-2 sentences>
 """
 
