@@ -1092,6 +1092,8 @@ async function loadExistingEvents(sid) {{
   }} catch(e) {{ /* ignore */ }}
 }}
 
+const seenEventIds = new Set();
+
 function startSSE(sid) {{
   eventSource = new EventSource(PREFIX + '/api/stream/' + encodeURIComponent(sid));
   const stream = document.getElementById('event-stream');
@@ -1103,12 +1105,15 @@ function startSSE(sid) {{
   eventSource.onmessage = function(event) {{
     if (currentSession !== sid) return;
     const evt = JSON.parse(event.data);
+    // Deduplicate — SSE replays all events on reconnect
+    if (evt.id && seenEventIds.has(evt.id)) return;
+    if (evt.id) seenEventIds.add(evt.id);
     stream.appendChild(renderEvent(evt));
     if (autoScroll) stream.scrollTop = stream.scrollHeight;
   }};
 
   eventSource.onerror = function() {{
-    // Will auto-reconnect
+    // Will auto-reconnect and replay, but seenEventIds prevents duplicates
   }};
 }}
 
