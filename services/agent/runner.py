@@ -573,19 +573,35 @@ def _auto_formalize(session_id: str, problem: str) -> str:
         raw, reasoning = _call_llm(system, user, model=PLANNER_MODEL)
         if reasoning:
             db.emit_event(session_id, "formalize_thinking", {"reasoning": reasoning[:3000]})
-        # Clean up: strip fences, thinking tags, pick first line that starts with theorem/lemma
+        # Clean up: strip fences, thinking tags
         raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
-        raw = re.sub(r"```\w*\s*", "", raw).strip()
-        for line in raw.split("\n"):
-            line = line.strip()
-            if re.match(r"^(theorem|lemma)\s", line):
-                lean_stmt = line
-                break
+        raw = re.sub(r"```\w*", "", raw).strip()
+
+        # Find the theorem/lemma declaration — may span multiple lines
+        lines = raw.split("\n")
+        stmt_lines: list[str] = []
+        collecting = False
+        for line in lines:
+            stripped = line.strip()
+            if not collecting and re.match(r"^(theorem|lemma)\s", stripped):
+                collecting = True
+                stmt_lines.append(stripped)
+            elif collecting:
+                # Continuation: indented line or line with : or )
+                if stripped.startswith("(") or stripped.startswith("[") or stripped.startswith(":") or (line.startswith(" ") and stripped):
+                    stmt_lines.append(stripped)
+                else:
+                    break  # End of theorem statement
+
+        if stmt_lines:
+            lean_stmt = " ".join(stmt_lines)
         else:
-            lean_stmt = raw.split("\n")[0].strip()
+            lean_stmt = lines[0].strip() if lines else ""
 
         # Remove trailing := by ... if the model added it
         lean_stmt = re.sub(r"\s*:=\s*by.*$", "", lean_stmt).strip()
+        # Remove trailing := sorry
+        lean_stmt = re.sub(r"\s*:=\s*sorry.*$", "", lean_stmt).strip()
 
         log.info("auto_formalized", session_id=session_id, statement=lean_stmt[:200])
         db.emit_event(session_id, "formalize_result", {"lean_statement": lean_stmt})
