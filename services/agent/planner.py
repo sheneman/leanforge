@@ -282,6 +282,7 @@ RULES:
 5. Do NOT use introN (not valid in Lean 4). Use `intro a b c`.
 6. Output ONLY the complete Lean 4 file. No explanation, no markdown.
 7. Add specific imports if lemmas come from modules beyond Mathlib.Tactic (e.g., `import Mathlib.GroupTheory.PGroup`).
+8. You CAN use `exact?` as a tactic when unsure of the exact term. Lean will search for a matching lemma. This is especially useful for the final step.
 
 CRITICAL INDENTATION RULES:
 - For simple have statements, use ONE LINE: `have h : T := by rw [x]; exact y`
@@ -315,15 +316,25 @@ def synthesize_tactics(
     and uses them directly.
     """
     # Build the Lean file with context
-    lines = ["import Mathlib.Tactic", ""]
+    # Collect imports from lemma modules
+    imports = {"Mathlib.Tactic"}
+    if lemmas:
+        for lem in (lemmas or [])[:10]:
+            mod = lem.get("module", "")
+            if mod and mod.startswith("Mathlib."):
+                imports.add(mod)
+
+    lines = [f"import {imp}" for imp in sorted(imports)]
+    lines.append("")
     if strategy:
         lines.append(f"-- Proof strategy: {strategy}")
         lines.append("")
     if lemmas:
         lines.append("-- The following lemmas exist in Mathlib and SHOULD be used:")
+        lines.append("-- Use the EXACT fully-qualified names shown here.")
         for lem in (lemmas or [])[:10]:
             name = lem.get("name", "")
-            stmt = lem.get("statement", "")[:200]
+            stmt = lem.get("statement", "")  # Full signature, no truncation
             lines.append(f"-- {name} : {stmt}")
         lines.append("")
     lines.append(f"{theorem_statement} := by")

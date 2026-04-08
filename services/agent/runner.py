@@ -117,6 +117,48 @@ def verify_lean(source: str) -> dict:
         return {"success": False, "diagnostics": [{"message": str(e)}]}
 
 
+def _apply_exact_suggestions(source: str, diagnostics: list[dict]) -> str | None:
+    """Extract 'Try this:' suggestions from Lean info diagnostics and apply them.
+
+    When the model writes `exact?`, `apply?`, or `simp?`, Lean returns
+    info diagnostics like 'Try this: exact Even.add ha hb'. This function
+    finds those suggestions and substitutes them back into the source.
+
+    Returns the modified source, or None if no suggestions were found.
+    """
+    suggestions = []
+    for d in diagnostics:
+        if not isinstance(d, dict):
+            continue
+        msg = d.get("message", "")
+        sev = d.get("severity", "")
+        line = d.get("line")
+        if sev == "info" and "Try this:" in msg:
+            # Extract the suggestion after "Try this: "
+            m = re.search(r"Try this:\s*(.+?)(?:\n|$)", msg)
+            if m and line is not None:
+                suggestions.append((int(line), m.group(1).strip()))
+
+    if not suggestions:
+        return None
+
+    lines = source.split("\n")
+    applied = False
+    for line_num, replacement in sorted(suggestions, reverse=True):
+        idx = line_num - 1  # Lean uses 1-based line numbers
+        if 0 <= idx < len(lines):
+            old_line = lines[idx]
+            # Preserve indentation
+            indent = len(old_line) - len(old_line.lstrip())
+            lines[idx] = " " * indent + replacement
+            applied = True
+            log.info("exact_suggestion_applied",
+                      line=line_num, old=old_line.strip()[:50],
+                      new=replacement[:80])
+
+    return "\n".join(lines) if applied else None
+
+
 def _clean_leanstral_output(raw: str) -> str:
     """Aggressively clean Leanstral output to extract only valid Lean 4 tactics.
 
@@ -516,6 +558,30 @@ def run_turn(session_id: str) -> dict:
         ],
         "elapsed": elapsed,
     })
+
+    # 4a2. If Lean returned "Try this:" suggestions (from exact?, apply?, simp?),
+    # apply them and re-verify. This lets the model use search tactics.
+    suggested_source = _apply_exact_suggestions(best_source, verify_diags)
+    if suggested_source:
+        db.emit_event(session_id, "exact_suggestion", {
+            "original": best_source[:1000],
+            "suggested": suggested_source[:1000],
+        })
+        db.emit_event(session_id, "verify_start", {"source": suggested_source[:3000]})
+        t0 = time.time()
+        result = verify_lean(suggested_source)
+        elapsed = round(time.time() - t0, 2)
+        verify_diags = result.get("diagnostics", [])
+        db.emit_event(session_id, "verify_result", {
+            "success": result.get("success", False),
+            "diagnostics": [
+                (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
+                for d in verify_diags[:5]
+            ],
+            "elapsed": elapsed,
+        })
+        if result.get("success"):
+            best_source = suggested_source
 
     # 4b. If failed with unknown identifiers, try fixing hallucinated names first
     if not result.get("success"):
