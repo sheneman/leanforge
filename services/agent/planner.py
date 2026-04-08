@@ -269,39 +269,61 @@ def plan_next_step(session_id: str) -> dict:
     return plan
 
 
+def _build_lean_file_for_leanstral(
+    theorem_statement: str,
+    strategy: str = "",
+    lemmas: list[dict] | None = None,
+) -> str:
+    """Build a complete Lean 4 file with lemma signatures as comments.
+
+    Leanstral is designed to work on real Lean files. It reads the
+    commented lemma signatures as context and uses them in its proof.
+    """
+    lines = [
+        "import Mathlib.Tactic",
+        "",
+    ]
+    if strategy:
+        lines.append(f"-- Proof strategy: {strategy}")
+        lines.append("")
+    if lemmas:
+        lines.append("-- The following lemmas exist in Mathlib and may be useful:")
+        for lem in lemmas[:10]:
+            name = lem.get("name", "")
+            stmt = lem.get("statement", "")[:200]
+            lines.append(f"-- {name} : {stmt}")
+        lines.append("")
+    lines.append(f"{theorem_statement} := by")
+    lines.append("  sorry")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def synthesize_tactics(
     theorem_statement: str,
     strategy: str = "",
     hints: str = "",
     session_id: str = "",
+    lemmas: list[dict] | None = None,
 ) -> tuple[str, str]:
-    """Call Leanstral to generate Lean 4 tactics based on a strategy.
+    """Call Leanstral to fill in a sorry in a complete Lean 4 file.
 
-    This is the ONLY place Lean code should be generated. The planner
-    proposes strategies in natural language; Leanstral writes the code.
-    Returns (tactics, reasoning).
+    Builds a Lean file with imports + commented lemma signatures from
+    retrieval + theorem with sorry. Leanstral reads the file context
+    and uses the lemma signatures it sees as code context.
     """
     if not LEANSTRAL_API_MODEL:
         return "exact?", ""
 
-    # Give Leanstral a complete Lean 4 file to complete
-    user = f"Complete the following Lean 4 proof:\n\n"
-    user += f"```lean4\nimport Mathlib.Tactic\n\n{theorem_statement} := by\n  sorry\n```\n\n"
-    if strategy:
-        user += f"Proof strategy: {strategy}\n\n"
-    if hints:
-        user += f"Relevant mathlib lemmas that may help:\n{hints}\n\n"
-    user += "Replace the sorry with a complete tactic proof. Output the full proof as Lean 4 code.\n\n"
-    user += "INDENTATION RULES (critical for Lean 4):\n"
-    user += "- All top-level tactics (have, let, intro, apply, exact, cases, etc.) at 2-space indent\n"
-    user += "- Only indent deeper (4 spaces) INSIDE a `by` sub-block\n"
-    user += "- Sequential have/let statements are SIBLINGS at the same level, NOT nested\n"
-    user += "- Example of CORRECT indentation:\n"
-    user += "  have h1 : T1 := expr1\n"
-    user += "  have h2 : T2 := by\n"
-    user += "    tactic1\n"
-    user += "    tactic2\n"
-    user += "  exact h2\n"
+    lean_file = _build_lean_file_for_leanstral(
+        theorem_statement, strategy, lemmas,
+    )
+
+    user = (
+        "Replace the sorry with a valid Lean 4 proof. "
+        "Output ONLY the complete Lean 4 file, nothing else.\n\n"
+        f"{lean_file}"
+    )
 
     try:
         content, reasoning = _call_leanstral(user)
@@ -332,20 +354,31 @@ def repair_tactics(
     if not LEANSTRAL_API_MODEL:
         return "exact?", ""
 
-    # Give Leanstral the failed proof with errors and ask for a complete new proof
-    user = f"The following Lean 4 proof failed to compile:\n\n"
-    user += f"```lean4\nimport Mathlib.Tactic\n\n{theorem_statement} := by\n"
-    for line in failed_tactics[:1500].split("\n"):
-        user += f"  {line}\n"
-    user += "```\n\n"
-    user += "Compiler errors:\n"
+    # Give Leanstral the failed file with error comments
+    lines = [
+        "import Mathlib.Tactic",
+        "",
+        "-- COMPILER ERRORS from previous attempt:",
+    ]
     for d in diagnostics[:5]:
-        user += f"  - {d}\n"
-    user += "\nWrite a corrected complete proof. Fix the errors above. Output the full Lean 4 code.\n"
-    user += "\nINDENTATION RULES (critical):\n"
-    user += "- All top-level tactics at 2-space indent\n"
-    user += "- Only indent deeper (4 spaces) INSIDE a `by` sub-block\n"
-    user += "- Sequential have/let are SIBLINGS at same level, NOT nested\n"
+        lines.append(f"-- ERROR: {d}")
+    lines.append("")
+    lines.append(f"{theorem_statement} := by")
+    # Put the failed tactics as commented-out reference
+    lines.append("  -- Previous attempt (failed):")
+    for tac_line in failed_tactics[:1000].split("\n")[:15]:
+        if tac_line.strip():
+            lines.append(f"  -- {tac_line.strip()}")
+    lines.append("  sorry  -- Replace with corrected proof")
+    lines.append("")
+    lean_file = "\n".join(lines)
+
+    user = (
+        "The sorry needs a corrected proof. The previous attempt and its errors "
+        "are shown as comments. Fix the errors and replace sorry. "
+        "Output ONLY the complete Lean 4 file.\n\n"
+        f"{lean_file}"
+    )
 
     try:
         content, reasoning = _call_leanstral(user)

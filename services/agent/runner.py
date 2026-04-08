@@ -463,6 +463,7 @@ def run_turn(session_id: str) -> dict:
         strategy=strategy_desc,
         hints=lemma_hints,
         session_id=session_id,
+        lemmas=all_lemmas,
     )
     db.emit_event(session_id, "synthesize_result", {
         "tactics": leanstral_tactics[:3000],
