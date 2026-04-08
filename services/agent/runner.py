@@ -189,6 +189,53 @@ def _clean_leanstral_output(raw: str) -> str:
     return result if result else "sorry"
 
 
+def _normalize_tactic_indentation(tactics: str, base_indent: int = 2) -> str:
+    """Normalize tactic indentation to consistent 2-space levels.
+
+    LLMs produce inconsistent indentation (mixed 2/4/6 spaces).
+    This normalizer:
+    1. Strips the common leading whitespace (dedent)
+    2. Converts all indentation to 2-space multiples
+    3. Ensures everything is inside the 'by' block (base_indent spaces)
+
+    Preserves relative indentation structure — deeper blocks stay deeper.
+    """
+    lines = tactics.split("\n")
+
+    # Find minimum indentation of non-blank lines
+    min_indent = 999
+    for line in lines:
+        if line.strip():
+            leading = len(line) - len(line.lstrip())
+            min_indent = min(min_indent, leading)
+    if min_indent == 999:
+        min_indent = 0
+
+    # Normalize: strip common prefix, convert to 2-space levels
+    result: list[str] = []
+    for line in lines:
+        if not line.strip():
+            result.append("")
+            continue
+
+        leading = len(line) - len(line.lstrip())
+        content = line.lstrip()
+
+        # Calculate relative depth from the minimum
+        relative = leading - min_indent
+
+        # Convert to 2-space levels: round to nearest 2
+        # e.g., 3 spaces → 2, 5 spaces → 4, 7 spaces → 6
+        normalized_depth = ((relative + 1) // 2) * 2
+
+        # Add base indentation (inside the 'by' block)
+        total_indent = base_indent + normalized_depth
+
+        result.append(" " * total_indent + content)
+
+    return "\n".join(result)
+
+
 def build_lean_source(lean_statement: str, imports: list[str], tactics: str, preamble: str = "") -> str:
     """Assemble a complete Lean source file."""
     import_lines = "\n".join(f"import {i}" for i in imports)
@@ -202,23 +249,15 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
     # Clean the tactics through the aggressive filter
     tactics = _clean_leanstral_output(tactics)
 
+    # Normalize indentation to consistent 2-space levels
+    tactics = _normalize_tactic_indentation(tactics, base_indent=2)
+
     parts = [import_lines, ""]
     if preamble:
         parts.append(preamble)
         parts.append("")
     parts.append(f"{stmt} := by")
-    # Check if tactics already have indentation (from Leanstral's full proof output)
-    tactic_lines = tactics.split("\n")
-    first_nonblank = next((l for l in tactic_lines if l.strip()), "")
-    already_indented = first_nonblank.startswith("  ") or first_nonblank.startswith("\t")
-
-    for line in tactic_lines:
-        if not line.strip():
-            parts.append("")
-        elif already_indented:
-            parts.append(line)  # Leanstral already indented properly
-        else:
-            parts.append(f"  {line}")  # Add indentation for flat tactics
+    parts.append(tactics)
     parts.append("")
     return "\n".join(parts)
 
