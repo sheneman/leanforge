@@ -202,36 +202,21 @@ _CONTINUATION_STARTERS = re.compile(
 
 
 def _normalize_tactic_indentation(tactics: str, base_indent: int = 2) -> str:
-    """Normalize tactic indentation using original indent as structure guide.
+    """Normalize tactic indentation with block tracking and pop detection.
 
-    Uses the original indentation to determine relative block depth,
-    mapping to clean 2-space levels. Key insight: track which original
-    indent levels correspond to which blocks, and use that to detect
-    block boundaries.
+    Uses both keyword detection AND original indentation to determine
+    block structure:
+    - A 'by' at end of line pushes a new block (depth +1)
+    - A keyword line at original indent <= the block opener's indent pops the block
+    - Keywords go at the current block's base depth
+    - Non-keywords go one level deeper (continuations)
     """
     lines = tactics.split("\n")
-
-    # Find the minimum indentation (= the top-level of the tactic block)
-    min_indent = 999
-    for line in lines:
-        if line.strip():
-            min_indent = min(min_indent, len(line) - len(line.lstrip()))
-    if min_indent == 999:
-        min_indent = 0
-
-    # Map original indentation to depth levels
-    # Collect all unique indent levels and sort them
-    indent_levels: list[int] = sorted(set(
-        len(line) - len(line.lstrip())
-        for line in lines if line.strip()
-    ))
-
-    # Create mapping: original indent → depth
-    indent_to_depth: dict[int, int] = {}
-    for i, level in enumerate(indent_levels):
-        indent_to_depth[level] = i
-
     result: list[str] = []
+
+    # Stack entries: (output_depth, original_indent_of_opener)
+    block_stack: list[tuple[int, int]] = [(0, 0)]
+
     for line in lines:
         if not line.strip():
             result.append("")
@@ -239,12 +224,30 @@ def _normalize_tactic_indentation(tactics: str, base_indent: int = 2) -> str:
 
         content = line.lstrip()
         original_indent = len(line) - len(line.lstrip())
+        is_keyword = bool(_TOP_LEVEL_TACTICS.match(content))
 
-        # Look up the depth for this indent level
-        depth = indent_to_depth.get(original_indent, 0)
-        total_indent = base_indent + depth * 2
+        # Pop blocks: if this is a keyword at or below the opener's indent, pop
+        if is_keyword:
+            while len(block_stack) > 1:
+                _, opener_indent = block_stack[-1]
+                if original_indent <= opener_indent:
+                    block_stack.pop()
+                else:
+                    break
 
-        result.append(" " * total_indent + content)
+        # Determine output indent
+        current_depth = block_stack[-1][0]
+        if is_keyword:
+            indent = base_indent + current_depth * 2
+        else:
+            indent = base_indent + (current_depth + 1) * 2
+
+        result.append(" " * indent + content)
+
+        # If this line ends with 'by', push a new block
+        stripped = content.rstrip()
+        if stripped.endswith(" by") or stripped.endswith(":= by") or stripped == "by":
+            block_stack.append((current_depth + 1, original_indent))
 
     return "\n".join(result)
 
@@ -262,17 +265,23 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
     # Clean the tactics through the aggressive filter
     tactics = _clean_leanstral_output(tactics)
 
-    # Normalize indentation to consistent 2-space levels
-    tactics = _normalize_tactic_indentation(tactics, base_indent=2)
-
     parts = [import_lines, ""]
     if preamble:
         parts.append(preamble)
         parts.append("")
     parts.append(f"{stmt} := by")
-    parts.append(tactics)
+    # Add tactics with minimal indent (formatter will fix structure)
+    for line in tactics.split("\n"):
+        if line.strip():
+            parts.append(f"  {line.lstrip()}" if not line.startswith("  ") else line)
+        else:
+            parts.append("")
     parts.append("")
     source = "\n".join(parts)
+
+    # Format with our Lean-aware formatter (fixes sibling indentation)
+    from scripts.lean_format import format_lean_source
+    source = format_lean_source(source)
 
     # Run lean-fmt as a final pass if available (normalizes spacing, operators)
     source = _run_lean_fmt(source)
