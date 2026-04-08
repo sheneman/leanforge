@@ -470,15 +470,33 @@ def run_turn(session_id: str) -> dict:
     })
 
     # 4. Verify Leanstral's output
+    # Leanstral returns a complete Lean file — use it directly if it has imports + theorem
+    # Otherwise fall back to build_lean_source
     best_result = None
     best_tactics = leanstral_tactics
     best_source = ""
 
-    source = build_lean_source(
-        session["lean_statement"],
-        session["imports"],
-        leanstral_tactics,
-    )
+    # Check if Leanstral returned a complete file (has import and theorem)
+    cleaned = re.sub(r"```\w*", "", leanstral_tactics).strip()
+    # Remove comment-only lines at the start (strategy comments)
+    lean_lines = [l for l in cleaned.split("\n") if not l.strip().startswith("--") or "import" in l.lower()]
+    has_import = any("import " in l for l in cleaned.split("\n")[:5])
+    has_theorem = any(re.match(r"^(theorem|lemma|def)\s", l.strip()) for l in cleaned.split("\n"))
+
+    if has_import and has_theorem:
+        # Use Leanstral's complete file directly — just strip code fences
+        source = cleaned
+        # Run formatter to fix indentation
+        from scripts.lean_format import format_lean_source
+        source = format_lean_source(source)
+        source = _run_lean_fmt(source)
+    else:
+        # Leanstral returned just tactics — wrap them
+        source = build_lean_source(
+            session["lean_statement"],
+            session["imports"],
+            leanstral_tactics,
+        )
     best_source = source
 
     db.emit_event(session_id, "verify_start", {"source": source[:3000]})
