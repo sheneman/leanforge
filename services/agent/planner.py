@@ -269,34 +269,18 @@ def plan_next_step(session_id: str) -> dict:
     return plan
 
 
-def _build_lean_file_for_leanstral(
-    theorem_statement: str,
-    strategy: str = "",
-    lemmas: list[dict] | None = None,
-) -> str:
-    """Build a complete Lean 4 file with lemma signatures as comments.
+LEAN_AGENT_SYSTEM = """\
+You are a Lean 4 proof engineer. You write short, correct Lean 4 tactic proofs.
 
-    Leanstral is designed to work on real Lean files. It reads the
-    commented lemma signatures as context and uses them in its proof.
-    """
-    lines = [
-        "import Mathlib.Tactic",
-        "",
-    ]
-    if strategy:
-        lines.append(f"-- Proof strategy: {strategy}")
-        lines.append("")
-    if lemmas:
-        lines.append("-- The following lemmas exist in Mathlib and may be useful:")
-        for lem in lemmas[:10]:
-            name = lem.get("name", "")
-            stmt = lem.get("statement", "")[:200]
-            lines.append(f"-- {name} : {stmt}")
-        lines.append("")
-    lines.append(f"{theorem_statement} := by")
-    lines.append("  sorry")
-    lines.append("")
-    return "\n".join(lines)
+RULES:
+1. Use ONLY lemmas listed in the comments — they are real and exist in Mathlib.
+2. Prefer short proofs (1-5 lines) using exact/apply with existing lemmas.
+3. Do NOT reprove what Mathlib already provides.
+4. All sibling tactics (have, let, intro, apply, exact) at 2-space indent.
+5. Only indent deeper (4 spaces) inside a `by` sub-block.
+6. Do NOT use introN (not valid in Lean 4). Use `intro a b c`.
+7. Output ONLY the complete Lean 4 file. No explanation, no markdown.
+"""
 
 
 def synthesize_tactics(
@@ -306,34 +290,42 @@ def synthesize_tactics(
     session_id: str = "",
     lemmas: list[dict] | None = None,
 ) -> tuple[str, str]:
-    """Call Leanstral to fill in a sorry in a complete Lean 4 file.
+    """Call qwen3.5-122b (the lean agent) to write a proof.
 
     Builds a Lean file with imports + commented lemma signatures from
-    retrieval + theorem with sorry. Leanstral reads the file context
-    and uses the lemma signatures it sees as code context.
+    retrieval + theorem with sorry. The model reads the lemma signatures
+    and uses them directly.
     """
-    if not LEANSTRAL_API_MODEL:
-        return "exact?", ""
-
-    lean_file = _build_lean_file_for_leanstral(
-        theorem_statement, strategy, lemmas,
-    )
+    # Build the Lean file with context
+    lines = ["import Mathlib.Tactic", ""]
+    if strategy:
+        lines.append(f"-- Proof strategy: {strategy}")
+        lines.append("")
+    if lemmas:
+        lines.append("-- The following lemmas exist in Mathlib and SHOULD be used:")
+        for lem in (lemmas or [])[:10]:
+            name = lem.get("name", "")
+            stmt = lem.get("statement", "")[:200]
+            lines.append(f"-- {name} : {stmt}")
+        lines.append("")
+    lines.append(f"{theorem_statement} := by")
+    lines.append("  sorry")
+    lines.append("")
+    lean_file = "\n".join(lines)
 
     user = (
-        "Replace the sorry with a valid Lean 4 proof. "
-        "Output ONLY the complete Lean 4 file, nothing else.\n\n"
+        f"Replace the sorry with a correct Lean 4 proof. "
+        f"Use the lemmas listed in the comments. Keep it short.\n\n"
         f"{lean_file}"
     )
 
     try:
-        content, reasoning = _call_leanstral(user)
+        content, reasoning = _call_llm(LEAN_AGENT_SYSTEM, user, model=PLANNER_MODEL)
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "synthesize_thinking", {
-                "reasoning": reasoning[:3000],
+                "reasoning": reasoning[:5000],
             })
-        # Leanstral returns full Lean code — the runner's _clean_leanstral_output
-        # will extract just the tactics from the complete proof
         return content, reasoning
     except Exception as e:
         log.error("synthesize_failed", error=str(e))
@@ -346,7 +338,7 @@ def repair_tactics(
     diagnostics: list[str],
     session_id: str = "",
 ) -> tuple[str, str]:
-    """Call Leanstral to fix a failed proof based on Lean compiler errors.
+    """Call qwen3.5-122b to fix a failed proof based on Lean compiler errors.
 
     Sends the failed tactics + error messages to Leanstral for repair.
     Returns (repaired_tactics, reasoning).
@@ -381,11 +373,11 @@ def repair_tactics(
     )
 
     try:
-        content, reasoning = _call_leanstral(user)
+        content, reasoning = _call_llm(LEAN_AGENT_SYSTEM, user, model=PLANNER_MODEL)
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "repair_thinking", {
-                "reasoning": reasoning[:3000],
+                "reasoning": reasoning[:5000],
             })
         return content, reasoning
     except Exception as e:
