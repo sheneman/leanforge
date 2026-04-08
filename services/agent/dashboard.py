@@ -1102,7 +1102,7 @@ async function resumeSession(sid) {{
 }}
 
 async function deleteSession(sid) {{
-  if (!confirm('Delete session ' + sid + '? This removes all turns, lessons, and events.')) return;
+  if (!confirm('Delete session ' + sid + '? This removes its turns and events. Global lessons are preserved.')) return;
   await fetch(PREFIX + '/api/sessions/' + encodeURIComponent(sid), {{method:'DELETE'}});
   document.getElementById('session-detail').innerHTML = '<div class="placeholder">Select a session</div>';
   document.getElementById('event-stream').innerHTML = '';
