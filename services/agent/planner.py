@@ -276,10 +276,24 @@ RULES:
 1. Use ONLY lemmas listed in the comments — they are real and exist in Mathlib.
 2. Prefer short proofs (1-5 lines) using exact/apply with existing lemmas.
 3. Do NOT reprove what Mathlib already provides.
-4. All sibling tactics (have, let, intro, apply, exact) at 2-space indent.
-5. Only indent deeper (4 spaces) inside a `by` sub-block.
-6. Do NOT use introN (not valid in Lean 4). Use `intro a b c`.
-7. Output ONLY the complete Lean 4 file. No explanation, no markdown.
+4. Do NOT use introN (not valid in Lean 4). Use `intro a b c`.
+5. Output ONLY the complete Lean 4 file. No explanation, no markdown.
+
+CRITICAL INDENTATION RULES:
+- For simple have statements, use ONE LINE: `have h : T := by rw [x]; exact y`
+- Do NOT use multi-line by blocks for simple conversions.
+- If you must use a multi-line by block, the NEXT tactic after it must be BACK at 2-space indent.
+- WRONG (causes 'No goals to be solved'):
+    have h : T := by
+      exact foo
+      exact bar   -- THIS IS INSIDE THE BY BLOCK — WRONG
+  - CORRECT:
+    have h : T := by exact foo
+    exact bar     -- THIS IS A SIBLING — CORRECT
+  - ALSO CORRECT:
+    have h : T := by
+      exact foo
+    exact bar     -- BACK TO 2-SPACE INDENT
 """
 
 
