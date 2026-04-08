@@ -207,9 +207,18 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
         parts.append(preamble)
         parts.append("")
     parts.append(f"{stmt} := by")
-    # Indent EVERY line of tactics by 2 spaces so they're inside the 'by' block
-    for line in tactics.split("\n"):
-        parts.append(f"  {line}" if line.strip() else "")
+    # Check if tactics already have indentation (from Leanstral's full proof output)
+    tactic_lines = tactics.split("\n")
+    first_nonblank = next((l for l in tactic_lines if l.strip()), "")
+    already_indented = first_nonblank.startswith("  ") or first_nonblank.startswith("\t")
+
+    for line in tactic_lines:
+        if not line.strip():
+            parts.append("")
+        elif already_indented:
+            parts.append(line)  # Leanstral already indented properly
+        else:
+            parts.append(f"  {line}")  # Add indentation for flat tactics
     parts.append("")
     return "\n".join(parts)
 
