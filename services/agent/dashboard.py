@@ -1185,6 +1185,15 @@ function renderEvent(evt) {{
       div.innerHTML = wh;
       break;
 
+    case 'fix_hallucination':
+      div.className = 'evt';
+      let fh = time + '<span style="color:var(--purple);">Fixed hallucinated names:</span>';
+      for (const [bad, good] of Object.entries(d.replacements || {{}})) {{
+        fh += '<br>&nbsp;&nbsp;<s style="color:var(--red)">' + esc(bad) + '</s> → <b style="color:var(--green)">' + esc(good) + '</b>';
+      }}
+      div.innerHTML = fh;
+      break;
+
     case 'repair_start':
       div.className = 'evt';
       div.innerHTML = time + '<span style="color:var(--yellow);">Sending errors to Leanstral for repair...</span>';

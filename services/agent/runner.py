@@ -289,6 +289,64 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
     return source
 
 
+def _fix_hallucinated_names(source: str, diagnostics: list[dict], session_id: str = "") -> str:
+    """Fix hallucinated lemma names by searching retrieval for the closest real match.
+
+    When Lean says 'unknown identifier X' or 'unknown constant X', search
+    mathlib for the closest real name and substitute it in the source.
+    """
+    replacements: dict[str, str] = {}
+
+    for diag in diagnostics:
+        msg = diag.get("message", "") if isinstance(diag, dict) else str(diag)
+
+        # Extract unknown identifiers/constants
+        for pattern in [
+            r"Unknown (?:identifier|constant) [`'](\S+)[`']",
+            r"unknown identifier [`'](\S+)[`']",
+            r"unknown constant [`'](\S+)[`']",
+        ]:
+            m = re.search(pattern, msg, re.IGNORECASE)
+            if m:
+                bad_name = m.group(1).strip("'`")
+                if bad_name in replacements or len(bad_name) < 3:
+                    continue
+
+                # Search retrieval for closest match
+                results = search_mathlib(bad_name, top_k=3)
+                if results:
+                    best = results[0]
+                    real_name = best.get("name", "")
+                    if real_name and real_name != bad_name:
+                        replacements[bad_name] = real_name
+                        log.info("fix_hallucination",
+                                 bad=bad_name, real=real_name,
+                                 score=best.get("score", 0))
+
+    if not replacements:
+        return source
+
+    # Apply substitutions
+    fixed = source
+    for bad, good in replacements.items():
+        fixed = fixed.replace(bad, good)
+
+    if session_id and replacements:
+        db.emit_event(session_id, "fix_hallucination", {
+            "replacements": {k: v for k, v in list(replacements.items())[:5]},
+        })
+        # Learn this as a global lesson
+        for bad, good in replacements.items():
+            db.log_lesson(
+                session_id,
+                f"'{bad}' does not exist in mathlib. Use '{good}' instead.",
+                category="api",
+                global_lesson=True,
+            )
+
+    return fixed
+
+
 def _run_lean_fmt(source: str) -> str:
     """Run lean-fmt on the source if available. Returns original if lean-fmt fails."""
     import subprocess
@@ -437,7 +495,33 @@ def run_turn(session_id: str) -> dict:
         "elapsed": elapsed,
     })
 
-    # 4b. If failed, try Leanstral REPAIR (send errors back to Leanstral)
+    # 4b. If failed with unknown identifiers, try fixing hallucinated names first
+    if not result.get("success"):
+        has_unknown = any(
+            "unknown" in (d.get("message", "") if isinstance(d, dict) else str(d)).lower()
+            for d in verify_diags
+        )
+        if has_unknown:
+            fixed_source = _fix_hallucinated_names(source, verify_diags, session_id)
+            if fixed_source != source:
+                db.emit_event(session_id, "verify_start", {"source": fixed_source[:3000]})
+                t0 = time.time()
+                result = verify_lean(fixed_source)
+                elapsed = round(time.time() - t0, 2)
+                verify_diags = result.get("diagnostics", [])
+                db.emit_event(session_id, "verify_result", {
+                    "success": result.get("success", False),
+                    "diagnostics": [
+                        (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
+                        for d in verify_diags[:5]
+                    ],
+                    "elapsed": elapsed,
+                })
+                if result.get("success"):
+                    best_source = fixed_source
+                    best_tactics = leanstral_tactics  # tactics didn't change, source did
+
+    # 4c. If still failed, try Leanstral REPAIR
     if not result.get("success"):
         diag_msgs = [
             (d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200])
