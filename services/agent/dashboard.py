@@ -371,7 +371,22 @@ body {{
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }}
+.session-item .trash-btn {{
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}}
+.session-item:hover .trash-btn {{ opacity: 1; }}
+.session-item .trash-btn:hover {{ color: var(--red); }}
 .session-item .meta {{
   font-size: 11px;
   color: var(--text-dim);
@@ -900,7 +915,7 @@ async function loadSessions() {{
     let html = '';
     for (const s of sessions) {{
       const active = currentSession === s.session_id ? ' active' : '';
-      html += '<div class="session-item' + active + '" onclick="selectSession(\\''+esc(s.session_id)+'\\')"><div class="sid">'+esc(s.session_id)+'</div>';
+      html += '<div class="session-item' + active + '" onclick="selectSession(\\''+esc(s.session_id)+'\\')"><div class="sid"><span>'+esc(s.session_id)+'</span><button class="trash-btn" onclick="event.stopPropagation();quickDelete(\\''+esc(s.session_id)+'\\')">&#128465;</button></div>';
       html += '<div class="meta"><span class="'+badgeClass(s.status)+'">'+esc(s.status)+'</span>';
       html += '<span>T'+s.total_turns+'</span>';
       html += '<span>'+esc(s.updated_at||'')+'</span></div></div>';
@@ -1103,9 +1118,16 @@ async function resumeSession(sid) {{
 
 async function deleteSession(sid) {{
   if (!confirm('Delete session ' + sid + '? This removes its turns and events. Global lessons are preserved.')) return;
+  await quickDelete(sid);
+}}
+
+async function quickDelete(sid) {{
   await fetch(PREFIX + '/api/sessions/' + encodeURIComponent(sid), {{method:'DELETE'}});
-  document.getElementById('session-detail').innerHTML = '<div class="placeholder">Select a session</div>';
-  document.getElementById('event-stream').innerHTML = '';
+  if (currentSession === sid) {{
+    document.getElementById('session-detail').innerHTML = '<div class="placeholder">Select a session</div>';
+    document.getElementById('event-stream').innerHTML = '';
+    currentSession = null;
+  }}
   await loadSessions();
 }}
 
