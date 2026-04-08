@@ -159,6 +159,70 @@ def _apply_exact_suggestions(source: str, diagnostics: list[dict]) -> str | None
     return "\n".join(lines) if applied else None
 
 
+def _collapse_simple_by_blocks(source: str) -> str:
+    """Collapse simple multi-line by-blocks into single lines.
+
+    The LLM constantly writes:
+        have h : T := by
+          exact foo
+        next_tactic   -- often gets wrongly indented inside the by block
+
+    This function collapses single-tactic by-blocks to:
+        have h : T := by exact foo
+
+    This prevents the most common indentation bug where the next sibling
+    tactic ends up inside the by-block.
+    """
+    lines = source.split("\n")
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.rstrip()
+
+        # Check for pattern: line ending with `:= by` or `by` (with nothing after)
+        if re.search(r":=\s*by\s*$", stripped) or re.match(r"^\s+(by)\s*$", stripped):
+            # Look at the next non-empty line
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+
+            if j < len(lines):
+                next_line = lines[j].strip()
+                # Check if it's a single simple tactic (no nested blocks)
+                is_simple = (
+                    next_line and
+                    not next_line.startswith("by ") and
+                    "by\n" not in next_line and
+                    not next_line.endswith(" by") and
+                    ":= by" not in next_line and
+                    not any(next_line.startswith(kw) for kw in [
+                        "match ", "if ", "cases ", "induction ",
+                        "calc", "have ", "let ", "show ", "suffices ",
+                    ])
+                )
+                # Check if only one tactic line follows before returning to outer indent
+                k = j + 1
+                while k < len(lines) and not lines[k].strip():
+                    k += 1
+                one_tactic_only = (
+                    k >= len(lines) or
+                    (k < len(lines) and len(lines[k]) - len(lines[k].lstrip()) <= len(line) - len(line.lstrip()))
+                )
+
+                if is_simple and one_tactic_only:
+                    # Collapse: append tactic to the by line
+                    collapsed = stripped + " " + next_line
+                    result.append(collapsed)
+                    i = j + 1  # Skip the tactic line
+                    continue
+
+        result.append(line)
+        i += 1
+
+    return "\n".join(result)
+
+
 def _clean_leanstral_output(raw: str) -> str:
     """Aggressively clean Leanstral output to extract only valid Lean 4 tactics.
 
@@ -542,6 +606,8 @@ def run_turn(session_id: str) -> dict:
             session["imports"],
             leanstral_tactics,
         )
+    # Collapse simple by-blocks to single lines to prevent indentation bugs
+    source = _collapse_simple_by_blocks(source)
     best_source = source
 
     db.emit_event(session_id, "verify_start", {"source": source[:3000]})
