@@ -408,3 +408,78 @@ def repair_tactics(
     except Exception as e:
         log.error("repair_failed", error=str(e))
         return "exact?", ""
+
+
+DIAGNOSIS_SYSTEM = """\
+You are a Lean 4 debugging expert. You analyze failed proof attempts to \
+understand WHY they failed and extract actionable lessons.
+
+Given a failed Lean 4 proof and its compiler errors, you must:
+1. Identify the ROOT CAUSE — not just restate the error message.
+2. Check if a lemma was used with wrong types (return type vs goal type).
+3. Check if an import is missing or invalid.
+4. Check if indentation caused scope errors.
+5. Suggest a SPECIFIC fix.
+
+Respond in EXACTLY this format:
+ROOT_CAUSE: <one sentence explaining why this specific proof failed>
+FIX: <specific actionable fix, e.g. "use commGroupOfCardEqPrimeSq instead of \
+commutative_of_card_eq_prime_sq because the goal is IsAbelian G, not ∀ a b, a * b = b * a">
+LESSON: <a reusable lesson for future attempts, or NONE if this was a one-off typo>
+"""
+
+
+def diagnose_failure(
+    lean_source: str,
+    diagnostics: list[str],
+    lemma_signatures: list[dict] | None = None,
+    session_id: str = "",
+) -> dict:
+    """Ask the LLM to analyze WHY a proof attempt failed.
+
+    Returns a dict with root_cause, fix, and lesson fields.
+    This is the agent's ability to understand its own errors rather
+    than blindly retrying.
+    """
+    lines = [
+        "## Failed Lean 4 proof",
+        lean_source[:2000],
+        "",
+        "## Compiler errors",
+    ]
+    for d in diagnostics[:5]:
+        lines.append(f"  - {d}")
+
+    if lemma_signatures:
+        lines.append("")
+        lines.append("## Available lemma signatures (from Mathlib)")
+        for lem in lemma_signatures[:5]:
+            name = lem.get("name", "")
+            stmt = lem.get("statement", "")
+            lines.append(f"  {name} : {stmt}")
+
+    user = "\n".join(lines)
+
+    try:
+        raw, reasoning = _call_llm(DIAGNOSIS_SYSTEM, user, model=PLANNER_MODEL)
+
+        if reasoning and session_id:
+            from services.agent.db import emit_event
+            emit_event(session_id, "diagnosis_thinking", {
+                "reasoning": reasoning[:3000],
+            })
+
+        # Parse structured response
+        result = {}
+        for field in ["ROOT_CAUSE", "FIX", "LESSON"]:
+            m = re.search(rf"{field}:\s*(.+?)(?:\n[A-Z_]+:|$)", raw, re.DOTALL)
+            result[field.lower()] = m.group(1).strip()[:300] if m else ""
+
+        log.info("diagnosis_complete",
+                 session_id=session_id,
+                 root_cause=result.get("root_cause", "")[:80])
+        return result
+
+    except Exception as e:
+        log.error("diagnosis_failed", error=str(e))
+        return {"root_cause": "", "fix": "", "lesson": ""}

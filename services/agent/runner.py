@@ -34,7 +34,7 @@ load_dotenv()
 
 # Must import after load_dotenv so env vars are available
 from services.agent import db
-from services.agent.planner import plan_next_step, synthesize_tactics, repair_tactics
+from services.agent.planner import plan_next_step, synthesize_tactics, repair_tactics, diagnose_failure
 
 log = structlog.get_logger()
 
@@ -836,15 +836,32 @@ def run_turn(session_id: str) -> dict:
     if promising and best_source:
         db.update_session(session_id, best_partial_proof=best_source[:5000])
 
-    # Auto-extract lessons after every failed turn (not just every 10)
+    # Auto-extract lessons from repeated error patterns
     if not promising:
         new_lessons = db.auto_extract_lessons(session_id)
         if new_lessons:
             log.info("lessons_extracted", session_id=session_id, count=new_lessons)
-            db.emit_event(session_id, "lesson_learned", {
-                "lesson": f"Extracted {new_lessons} lesson(s) from errors",
-                "count": new_lessons,
-            })
+
+    # Diagnostic analysis — ask the LLM to reason about WHY the proof failed.
+    # This is the agent's self-debugging: instead of blindly retrying, it
+    # understands the root cause and logs an actionable lesson.
+    if not promising and error_count > 0 and error_count <= 5:
+        diagnosis = diagnose_failure(
+            lean_source=best_source,
+            diagnostics=diag_messages,
+            lemma_signatures=all_lemmas[:5] if all_lemmas else None,
+            session_id=session_id,
+        )
+        db.emit_event(session_id, "diagnosis", {
+            "root_cause": diagnosis.get("root_cause", ""),
+            "fix": diagnosis.get("fix", ""),
+            "lesson": diagnosis.get("lesson", ""),
+        })
+        # Log the lesson if it's actionable (not "NONE" or empty)
+        lesson_text = diagnosis.get("lesson", "")
+        if lesson_text and lesson_text.upper() != "NONE" and len(lesson_text) > 20:
+            db.log_lesson(session_id, lesson_text, category="diagnosis")
+            log.info("diagnosis_lesson", session_id=session_id, lesson=lesson_text[:80])
 
     # Emit turn_complete event
     db.emit_event(session_id, "turn_complete", {
