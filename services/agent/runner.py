@@ -207,7 +207,9 @@ def build_lean_source(lean_statement: str, imports: list[str], tactics: str, pre
         parts.append(preamble)
         parts.append("")
     parts.append(f"{stmt} := by")
-    parts.append(f"  {tactics}")
+    # Indent EVERY line of tactics by 2 spaces so they're inside the 'by' block
+    for line in tactics.split("\n"):
+        parts.append(f"  {line}" if line.strip() else "")
     parts.append("")
     return "\n".join(parts)
 
