@@ -66,8 +66,9 @@ def format_lean_source(source: str) -> str:
                 _, opener_indent, content_indent = by_stack[-1]
                 if content_indent > 0 and original_indent < content_indent:
                     by_stack.pop()
-                elif content_indent == 0 and original_indent <= opener_indent:
-                    by_stack.pop()
+                elif content_indent == 0:
+                    # Haven't seen content yet — don't pop, this IS the content
+                    break
                 else:
                     break
 
