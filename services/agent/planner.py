@@ -162,6 +162,9 @@ def _format_context_for_prompt(ctx: dict) -> str:
             status = "✓" if t["result"] == "verified" else "✗" if not t["promising"] else "~"
             diag = "; ".join(t["diagnostics"][:2]) if t["diagnostics"] else "no diagnostics"
             lines.append(f"  [{status}] Turn {t['turn']}: {t['strategy']} → {t['result']} ({diag})")
+            if t.get("subgoals"):
+                for sg in t["subgoals"][:1]:
+                    lines.append(f"      Remaining goal: {sg[:200]}")
 
     if ctx["lemmas_found"]:
         lines.append(f"\n## Useful lemmas found")
@@ -434,17 +437,24 @@ def synthesize_tactics(
     hints: str = "",
     session_id: str = "",
     lemmas: list[dict] | None = None,
+    lessons: list[str] | None = None,
 ) -> tuple[str, str]:
     """Call qwen3.5-122b (the lean agent) to write a proof.
 
     Builds a Lean file with imports + commented lemma signatures from
     retrieval + theorem with sorry. The model reads the lemma signatures
-    and uses them directly.
+    and uses them directly. Session lessons are included so the model
+    doesn't repeat known mistakes.
     """
     # Build the Lean file with context
     # Start with Mathlib.Tactic only — the model adds specific imports if needed.
     # Don't auto-add from retrieval modules — some may not be built in the container.
     lines = ["import Mathlib.Tactic", ""]
+    if lessons:
+        lines.append("-- CONSTRAINTS (hard rules from previous attempts — OBEY THESE):")
+        for lesson in lessons[:8]:
+            lines.append(f"-- ! {lesson[:200]}")
+        lines.append("")
     if strategy:
         lines.append(f"-- Proof strategy: {strategy}")
         lines.append("")
@@ -488,21 +498,32 @@ def repair_tactics(
     failed_tactics: str,
     diagnostics: list[str],
     session_id: str = "",
+    strategy: str = "",
+    lessons: list[str] | None = None,
 ) -> tuple[str, str]:
     """Call qwen3.5-122b to fix a failed proof based on Lean compiler errors.
 
-    Sends the failed tactics + error messages to Leanstral for repair.
+    Sends the failed tactics + error messages + strategy context + lessons
+    so the repair agent can make targeted fixes instead of blind rewrites.
     Returns (repaired_tactics, reasoning).
     """
     if not LEANSTRAL_API_MODEL:
         return "exact?", ""
 
-    # Give Leanstral the failed file with error comments
+    # Give Leanstral the failed file with full context
     lines = [
         "import Mathlib.Tactic",
         "",
-        "-- COMPILER ERRORS from previous attempt:",
     ]
+    if lessons:
+        lines.append("-- CONSTRAINTS (hard rules — OBEY THESE):")
+        for lesson in (lessons or [])[:6]:
+            lines.append(f"-- ! {lesson[:200]}")
+        lines.append("")
+    if strategy:
+        lines.append(f"-- Intended strategy: {strategy[:300]}")
+        lines.append("")
+    lines.append("-- COMPILER ERRORS from previous attempt:")
     for d in diagnostics[:5]:
         lines.append(f"-- ERROR: {d}")
     lines.append("")
@@ -519,6 +540,7 @@ def repair_tactics(
     user = (
         "The sorry needs a corrected proof. The previous attempt and its errors "
         "are shown as comments. Fix the errors and replace sorry. "
+        "Keep the intended strategy in mind. "
         "Output ONLY the complete Lean 4 file.\n\n"
         f"{lean_file}"
     )
@@ -560,6 +582,7 @@ def diagnose_failure(
     diagnostics: list[str],
     lemma_signatures: list[dict] | None = None,
     session_id: str = "",
+    strategy: str = "",
 ) -> dict:
     """Ask the LLM to analyze WHY a proof attempt failed.
 
@@ -567,12 +590,16 @@ def diagnose_failure(
     This is the agent's ability to understand its own errors rather
     than blindly retrying.
     """
-    lines = [
+    lines = []
+    if strategy:
+        lines.append(f"## Intended strategy\n{strategy[:300]}")
+        lines.append("")
+    lines.extend([
         "## Failed Lean 4 proof",
         lean_source[:2000],
         "",
         "## Compiler errors",
-    ]
+    ])
     for d in diagnostics[:5]:
         lines.append(f"  - {d}")
 

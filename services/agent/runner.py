@@ -570,8 +570,15 @@ def run_turn(session_id: str) -> dict:
             "query": query,
             "results": [{"title": r.get("title", ""), "url": r.get("url", "")} for r in results[:3]],
         })
-    # Log web findings as events only — NOT as lessons.
-    # Web snippets are noisy (Lean 3 docs, tutorials) and pollute the lesson pool.
+    # Store web findings as lightweight reference notes (title + URL only).
+    # NOT the raw description text — that's noisy Lean 3 / tutorial content.
+    if web_results:
+        refs = "; ".join(f"{r['title'][:60]} ({r['url'][:80]})" for r in web_results[:3])
+        db.log_lesson(
+            session_id,
+            f"Web refs for '{plan.get('web_search_queries', ['?'])[0][:50]}': {refs}",
+            category="web_reference",
+        )
 
     # 3. Synthesize tactics via Leanstral (ALL code generation goes through Leanstral)
     strategy_desc = plan.get("strategy_description", "")
@@ -588,12 +595,16 @@ def run_turn(session_id: str) -> dict:
         "strategy": strategy_desc[:300],
         "hints_len": len(lemma_hints),
     })
+    # Fetch lessons so the synthesizer knows session constraints
+    session_lessons = [l["lesson"] for l in db.get_lessons(session_id)]
+
     leanstral_tactics, _ = synthesize_tactics(
         session["lean_statement"],
         strategy=strategy_desc,
         hints=lemma_hints,
         session_id=session_id,
         lemmas=all_lemmas,
+        lessons=session_lessons,
     )
     db.emit_event(session_id, "synthesize_result", {
         "tactics": leanstral_tactics[:3000],
@@ -710,6 +721,8 @@ def run_turn(session_id: str) -> dict:
             leanstral_tactics,
             diag_msgs,
             session_id=session_id,
+            strategy=plan.get("strategy_description", ""),
+            lessons=session_lessons,
         )
         db.emit_event(session_id, "repair_result", {
             "tactics": repaired_tactics[:3000],
@@ -837,6 +850,16 @@ def run_turn(session_id: str) -> dict:
 
     result_label = "partial" if promising else "failed"
 
+    # Extract remaining subgoals from diagnostics (e.g., "unsolved goals" messages)
+    subgoals = []
+    for d in diags:
+        msg = d.get("message", "") if isinstance(d, dict) else str(d)
+        if "unsolved goals" in msg.lower():
+            # Lean prints the goal state after "unsolved goals"
+            subgoals.append(msg[:500])
+        elif "expected type" in msg.lower() or "has type" in msg.lower():
+            subgoals.append(msg[:300])
+
     db.log_turn(
         session_id=session_id,
         turn_number=turn_number,
@@ -847,11 +870,15 @@ def run_turn(session_id: str) -> dict:
         diagnostics=diag_messages,
         promising=promising,
         notes=plan.get("reasoning", ""),
+        subgoals_remaining=subgoals[:3],
     )
 
     # Update strategy tracking
     outcome = "promising" if promising else "dead_end"
     db.log_strategy(session_id, strategy, plan.get("strategy_description", ""), outcome, [turn_number])
+
+    # Tag lemmas with outcomes so retrieval can learn what's useful
+    db.tag_lemmas_used(session_id, best_source, result_label)
 
     # Only update best partial proof if genuinely promising
     if promising and best_source:
@@ -872,6 +899,7 @@ def run_turn(session_id: str) -> dict:
             diagnostics=diag_messages,
             lemma_signatures=all_lemmas[:5] if all_lemmas else None,
             session_id=session_id,
+            strategy=plan.get("strategy_description", ""),
         )
         db.emit_event(session_id, "diagnosis", {
             "root_cause": diagnosis.get("root_cause", ""),
@@ -883,6 +911,16 @@ def run_turn(session_id: str) -> dict:
         if lesson_text and lesson_text.upper() != "NONE" and len(lesson_text) > 20:
             db.log_lesson(session_id, lesson_text, category="diagnosis")
             log.info("diagnosis_lesson", session_id=session_id, lesson=lesson_text[:80])
+
+        # Also log the specific fix as a high-priority lesson so the planner
+        # acts on it immediately next turn
+        fix_text = diagnosis.get("fix", "")
+        if fix_text and fix_text.upper() != "NONE" and len(fix_text) > 20:
+            db.log_lesson(
+                session_id,
+                f"IMMEDIATE FIX (from last turn): {fix_text[:300]}",
+                category="diagnosis",
+            )
 
     # Emit turn_complete event
     db.emit_event(session_id, "turn_complete", {

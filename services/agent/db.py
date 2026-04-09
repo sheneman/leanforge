@@ -235,7 +235,33 @@ def log_lemma(session_id: str, name: str, statement: str, module: str = "", note
 
 
 def get_lemmas(session_id: str) -> list[dict]:
-    return list(lemmas().find({"session_id": session_id}))
+    """Get lemmas sorted by usefulness: verified > used_ok > untried > used_failed."""
+    return list(
+        lemmas().find({"session_id": session_id})
+        .sort([("outcome_score", DESCENDING), ("updated_at", DESCENDING)])
+    )
+
+
+def tag_lemmas_used(session_id: str, lean_source: str, result: str) -> None:
+    """After a turn, tag lemmas that appeared in the source with the outcome.
+
+    Lemmas that appeared in verified proofs get boosted. Lemmas that
+    appeared in failed proofs get demoted. This lets retrieval prioritize
+    lemmas that actually help.
+    """
+    score_map = {"verified": 10, "partial": 2, "failed": -1}
+    delta = score_map.get(result, 0)
+
+    for lem in lemmas().find({"session_id": session_id}):
+        name = lem["name"]
+        if name in lean_source:
+            lemmas().update_one(
+                {"_id": lem["_id"]},
+                {
+                    "$inc": {"outcome_score": delta, "times_used": 1},
+                    "$set": {"last_result": result},
+                },
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +480,7 @@ def build_context(session_id: str, max_recent: int = 5, max_promising: int = 5) 
                 "result": t["result"],
                 "diagnostics": t["diagnostics"][:2],
                 "promising": t["promising"],
+                "subgoals": t.get("subgoals_remaining", [])[:2],
             }
             for t in recent
         ],
