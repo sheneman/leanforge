@@ -1112,6 +1112,58 @@ def run_loop(session_id: str, max_turns: int = 1000, delay: int = TURN_DELAY_SEC
             db.emit_event(session_id, "error", {"message": "Could not formalize the problem into Lean. Please provide a Lean theorem statement."})
             return
 
+    # Verify the theorem statement compiles before starting the proof loop.
+    # Compile "statement := by sorry" — if this fails, the statement itself is invalid.
+    check_source = f"import Mathlib.Tactic\n\n{session['lean_statement']} := by sorry\n"
+    check_result = verify_lean(check_source)
+    check_diags = check_result.get("diagnostics", [])
+    # Filter out the expected "sorry" warning — we only care about real errors
+    real_errors = [
+        d for d in check_diags
+        if (d.get("severity") if isinstance(d, dict) else "") == "error"
+        and "sorry" not in (d.get("message", "") if isinstance(d, dict) else str(d)).lower()
+    ]
+    if real_errors:
+        error_msgs = [d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200] for d in real_errors[:3]]
+        log.warning("statement_invalid", session_id=session_id, errors=error_msgs)
+        db.emit_event(session_id, "error", {
+            "message": f"Theorem statement doesn't compile: {'; '.join(error_msgs)}"
+        })
+        # Try to re-formalize with the error feedback
+        if session.get("lean_statement") and not session.get("_formalize_retried"):
+            db.update_session(session_id, _formalize_retried=True)
+            db.emit_event(session_id, "formalize_start", {"problem": f"RETRY: {session['problem'][:200]}"})
+            from services.agent.planner import _call_llm, PLANNER_MODEL
+            retry_raw, _ = _call_llm(
+                "You are a Lean 4 formalization expert. Fix this theorem statement so it compiles. "
+                "Output ONLY the corrected theorem statement. No imports, no proof, no code fences.",
+                f"This Lean 4 theorem statement has errors:\n\n{session['lean_statement']}\n\n"
+                f"Errors: {'; '.join(error_msgs)}\n\nFix it.",
+                model=PLANNER_MODEL,
+            )
+            retry_raw = re.sub(r"<think>[\s\S]*?</think>", "", retry_raw).strip()
+            retry_raw = re.sub(r"```\w*", "", retry_raw).strip()
+            retry_raw = re.sub(r"\s*:=\s*by.*$", "", retry_raw).strip()
+            retry_raw = re.sub(r"\s*:=\s*sorry.*$", "", retry_raw).strip()
+            if retry_raw and "theorem" in retry_raw:
+                db.update_session(session_id, lean_statement=retry_raw)
+                session["lean_statement"] = retry_raw
+                db.emit_event(session_id, "formalize_result", {"lean_statement": retry_raw})
+                log.info("statement_retried", session_id=session_id, statement=retry_raw[:200])
+                # Re-check
+                check2 = verify_lean(f"import Mathlib.Tactic\n\n{retry_raw} := by sorry\n")
+                real_errors2 = [
+                    d for d in check2.get("diagnostics", [])
+                    if (d.get("severity") if isinstance(d, dict) else "") == "error"
+                    and "sorry" not in (d.get("message", "") if isinstance(d, dict) else str(d)).lower()
+                ]
+                if real_errors2:
+                    db.emit_event(session_id, "error", {"message": "Theorem statement still invalid after retry. Please provide a valid Lean statement."})
+                    return
+            else:
+                db.emit_event(session_id, "error", {"message": "Could not fix the theorem statement. Please provide a valid Lean statement."})
+                return
+
     log.info("loop_start", session_id=session_id, max_turns=max_turns, problem=session["problem"][:100])
 
     for i in range(max_turns):
