@@ -986,6 +986,7 @@ async function createSession() {{
 // --- Select session ---
 async function selectSession(sid) {{
   currentSession = sid;
+  seenEventIds.clear();
 
   // Update list highlight
   document.querySelectorAll('.session-item').forEach(el => {{
@@ -1138,6 +1139,8 @@ async function loadExistingEvents(sid) {{
     const events = await resp.json();
     const stream = document.getElementById('event-stream');
     for (const evt of events) {{
+      if (evt.id && seenEventIds.has(evt.id)) continue;
+      if (evt.id) seenEventIds.add(evt.id);
       stream.appendChild(renderEvent(evt));
     }}
     if (autoScroll) stream.scrollTop = stream.scrollHeight;
