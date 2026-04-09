@@ -1120,6 +1120,9 @@ def run_loop(session_id: str, max_turns: int = 1000, delay: int = TURN_DELAY_SEC
 
     for attempt in range(MAX_FORMALIZE_RETRIES + 1):
         check_source = f"import Mathlib.Tactic\n\n{session['lean_statement']} := by sorry\n"
+        db.emit_event(session_id, "verify_start", {
+            "source": f"[Checking formalization attempt {attempt + 1}]\n{check_source[:2000]}",
+        })
         check_result = verify_lean(check_source)
         check_diags = check_result.get("diagnostics", [])
         real_errors = [
@@ -1129,12 +1132,17 @@ def run_loop(session_id: str, max_turns: int = 1000, delay: int = TURN_DELAY_SEC
         ]
 
         if not real_errors:
-            if attempt > 0:
-                db.emit_event(session_id, "formalize_result", {
-                    "lean_statement": session["lean_statement"],
-                    "attempt": attempt + 1,
-                })
-                log.info("statement_validated", session_id=session_id, attempts=attempt + 1)
+            db.emit_event(session_id, "verify_result", {
+                "success": True,
+                "diagnostics": [],
+                "elapsed": check_result.get("elapsed_secs", 0),
+            })
+            db.emit_event(session_id, "formalize_result", {
+                "lean_statement": session["lean_statement"],
+                "attempt": attempt + 1,
+                "status": "valid",
+            })
+            log.info("statement_validated", session_id=session_id, attempts=attempt + 1)
             break  # Statement compiles — proceed to proof loop
 
         error_msgs = [d.get("message", "")[:200] if isinstance(d, dict) else str(d)[:200] for d in real_errors[:3]]
