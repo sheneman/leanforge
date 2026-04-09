@@ -1380,9 +1380,8 @@ sessionPollTimer = setInterval(loadSessions, 10000);
 
 @app.get("/api/sessions/{session_id}/export")
 async def api_export_session(session_id: str):
-    """Generate a print-ready HTML page for the proof session.
-
-    Opens in a new tab — user can print/save as PDF from the browser.
+    """Generate a comprehensive print-ready HTML page with EVERYTHING:
+    all thinking traces, creative ideas, search results, diagnoses, etc.
     """
     from services.agent import db as agent_db
     import html as html_mod
@@ -1391,17 +1390,21 @@ async def api_export_session(session_id: str):
     if not s:
         return HTMLResponse("<h1>Session not found</h1>", status_code=404)
 
-    turns_list = list(agent_db.turns().find(
+    # Get ALL events in chronological order — this is the full record
+    all_events = list(agent_db.events().find(
         {"session_id": session_id}
-    ).sort("turn", 1))
+    ).sort("timestamp", 1))
 
     lessons_list = list(agent_db.lessons().find(
         {"session_id": session_id}
-    ).sort("hit_count", -1).limit(20))
+    ).sort("hit_count", -1).limit(30))
+
+    global_lessons = list(agent_db.lessons().find(
+        {"session_id": "_global"}
+    ).sort("hit_count", -1).limit(15))
 
     esc = html_mod.escape
 
-    # Build the HTML
     status_color = {
         "verified": "#4caf50", "in_progress": "#2196f3",
         "abandoned": "#888", "stuck": "#ff9800",
@@ -1413,34 +1416,44 @@ async def api_export_session(session_id: str):
 <title>LeanForge — {esc(session_id)}</title>
 <style>
   @media print {{
-    body {{ margin: 0.5in; }}
+    body {{ margin: 0.4in; font-size: 11px; }}
     .no-print {{ display: none; }}
     pre {{ white-space: pre-wrap; word-wrap: break-word; }}
+    .event {{ page-break-inside: avoid; }}
   }}
   body {{
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    max-width: 850px; margin: 40px auto; padding: 0 20px;
-    color: #222; line-height: 1.5; font-size: 14px;
+    max-width: 900px; margin: 40px auto; padding: 0 20px;
+    color: #222; line-height: 1.45; font-size: 13px;
   }}
   h1 {{ font-size: 22px; margin-bottom: 4px; }}
-  h2 {{ font-size: 17px; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 28px; }}
-  h3 {{ font-size: 14px; margin-top: 16px; margin-bottom: 4px; }}
+  h2 {{ font-size: 17px; border-bottom: 2px solid #ddd; padding-bottom: 4px; margin-top: 32px; }}
   .meta {{ color: #666; font-size: 13px; margin-bottom: 16px; }}
   .status {{ display: inline-block; padding: 2px 10px; border-radius: 12px;
     color: white; font-size: 12px; font-weight: 600; }}
-  pre, code {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12.5px; }}
-  pre {{ background: #f5f5f5; padding: 12px 16px; border-radius: 6px;
-    overflow-x: auto; border: 1px solid #e0e0e0; }}
-  .turn {{ margin-bottom: 20px; page-break-inside: avoid; }}
-  .turn-header {{ font-weight: 600; margin-bottom: 4px; }}
+  pre, code {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 11.5px; }}
+  pre {{ background: #f5f5f5; padding: 10px 14px; border-radius: 6px;
+    overflow-x: auto; border: 1px solid #e0e0e0; margin: 6px 0; }}
+  .event {{ margin: 8px 0; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }}
+  .evt-time {{ color: #999; font-size: 11px; margin-right: 8px; }}
+  .evt-label {{ font-weight: 600; font-size: 12px; }}
+  .thinking {{ background: #f8f6ff; border-left: 3px solid #9c7cf4; padding: 8px 12px;
+    margin: 6px 0; font-size: 12px; white-space: pre-wrap; color: #444; }}
+  .search-result {{ margin-left: 16px; font-size: 12px; }}
+  .diag {{ color: #c62828; font-size: 12px; margin-left: 16px; }}
+  .creative {{ background: #faf0ff; border-left: 3px solid #ab47bc; padding: 8px 12px;
+    margin: 6px 0; }}
+  .diagnosis {{ background: #fff8e1; border-left: 3px solid #ffc107; padding: 8px 12px;
+    margin: 6px 0; }}
+  .lesson {{ margin: 4px 0; padding: 4px 8px; background: #fff8e1; border-left: 3px solid #ffc107;
+    font-size: 12px; }}
+  .verified-proof {{ border: 2px solid #4caf50; background: #e8f5e9; padding: 16px;
+    border-radius: 8px; }}
+  .turn-marker {{ background: #e3f2fd; padding: 6px 12px; border-radius: 4px;
+    font-weight: 700; font-size: 14px; margin-top: 20px; }}
   .turn-ok {{ color: #4caf50; }}
   .turn-fail {{ color: #c62828; }}
   .turn-partial {{ color: #ff9800; }}
-  .diag {{ color: #c62828; font-size: 12px; margin-left: 16px; }}
-  .lesson {{ margin: 4px 0; padding: 4px 8px; background: #fff8e1; border-left: 3px solid #ffc107;
-    font-size: 12.5px; }}
-  .verified-proof {{ border: 2px solid #4caf50; background: #e8f5e9; padding: 16px;
-    border-radius: 8px; }}
   .print-btn {{ background: #2196f3; color: white; border: none; padding: 8px 20px;
     border-radius: 6px; cursor: pointer; font-size: 14px; margin: 16px 0; }}
   .print-btn:hover {{ background: #1976d2; }}
@@ -1451,6 +1464,7 @@ async def api_export_session(session_id: str):
 <div class="meta">
   <span class="status" style="background:{status_color}">{esc(s.get("status", "?"))}</span>
   &nbsp; {s.get("total_turns", 0)} turns
+  &nbsp;&middot;&nbsp; {len(all_events)} events
   &nbsp;&middot;&nbsp; Created: {str(s.get("created_at", ""))[:19]}
   &nbsp;&middot;&nbsp; Updated: {str(s.get("updated_at", ""))[:19]}
 </div>
@@ -1462,43 +1476,188 @@ async def api_export_session(session_id: str):
 <pre>{esc(s.get("lean_statement", ""))}</pre>
 ''']
 
-    # Verified proof
     if s.get("verified_proof"):
         parts.append(f'''
 <h2>Verified Proof</h2>
 <div class="verified-proof"><pre>{esc(s["verified_proof"])}</pre></div>
 ''')
 
-    # Turn history
-    parts.append('<h2>Turn History</h2>')
-    for t in turns_list:
-        result = t.get("result", "?")
-        css = "turn-ok" if result == "verified" else "turn-partial" if t.get("promising") else "turn-fail"
-        icon = "\u2713" if result == "verified" else "~" if t.get("promising") else "\u2717"
-        parts.append(f'<div class="turn">')
-        parts.append(f'<div class="turn-header {css}">{icon} Turn {t.get("turn", "?")}: '
-                      f'{esc(t.get("strategy", "")[:80])} &rarr; {esc(result)}</div>')
+    # Full event stream — EVERYTHING
+    parts.append(f'<h2>Complete Event Log ({len(all_events)} events)</h2>')
 
-        if t.get("lean_source"):
-            src = t["lean_source"][:2000]
-            parts.append(f'<pre>{esc(src)}</pre>')
+    for evt in all_events:
+        etype = evt.get("type", "")
+        d = evt.get("data", {})
+        ts = str(evt.get("timestamp", ""))[:19]
+        time_html = f'<span class="evt-time">{esc(ts)}</span>'
 
-        for d in t.get("diagnostics", [])[:3]:
-            parts.append(f'<div class="diag">{esc(d[:150])}</div>')
+        if etype == "turn_start":
+            parts.append(f'<div class="turn-marker">{time_html} Turn {d.get("turn", "?")}</div>')
 
-        parts.append('</div>')
+        elif etype == "formalize_start":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#9c27b0;">Auto-formalizing...</span></div>')
+
+        elif etype == "formalize_thinking":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#9c27b0;">Formalization Reasoning:</span>')
+            parts.append(f'<div class="thinking">{esc(d.get("reasoning", ""))}</div></div>')
+
+        elif etype == "formalize_result":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#9c27b0;">Formalized:</span>')
+            parts.append(f'<pre>{esc(d.get("lean_statement", ""))}</pre></div>')
+
+        elif etype == "creativity_start":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#ab47bc;">&#10024; Creative Brainstorm</span></div>')
+
+        elif etype == "creativity_thinking":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#ab47bc;">Creative Reasoning:</span>')
+            parts.append(f'<div class="creative">{esc(d.get("reasoning", ""))}</div></div>')
+
+        elif etype == "creativity_ideas":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#ab47bc;">&#10024; Creative Ideas:</span>')
+            parts.append('<div class="creative">')
+            for idea in d.get("ideas", []):
+                parts.append(f'<p><b>{esc(idea.get("title", ""))}</b>: {esc(idea.get("insight", ""))}</p>')
+            parts.append('</div></div>')
+
+        elif etype == "planner_start":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#1976d2;">Planning next step...</span></div>')
+
+        elif etype == "planner_thinking":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#1976d2;">Planner Reasoning:</span>')
+            parts.append(f'<div class="thinking">{esc(d.get("reasoning", ""))}</div></div>')
+
+        elif etype == "planner_result":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#1976d2;">Strategy:</span> ')
+            action = d.get("action", "")
+            if action:
+                parts.append(f'[{esc(action)}] ')
+            parts.append(f'<b>{esc(d.get("strategy", ""))}</b>')
+            if d.get("reasoning"):
+                parts.append(f'<br><em>{esc(d["reasoning"])}</em>')
+            parts.append('</div>')
+
+        elif etype == "search_start":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#0277bd;">Searching:</span> {esc(d.get("query", ""))}</div>')
+
+        elif etype == "search_result":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#0277bd;">Found {len(d.get("results", []))} lemmas</span> for "{esc(d.get("query", ""))}"')
+            for r in d.get("results", []):
+                parts.append(f'<div class="search-result"><code>{esc(r.get("name", ""))}</code> {esc(r.get("statement", ""))}</div>')
+            parts.append('</div>')
+
+        elif etype == "web_search_result":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#00695c;">Web Search:</span> "{esc(d.get("query", ""))}"')
+            for r in d.get("results", []):
+                parts.append(f'<div class="search-result">{esc(r.get("title", ""))} &mdash; <code>{esc(r.get("url", ""))}</code></div>')
+            parts.append('</div>')
+
+        elif etype == "synthesize_start":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#00838f;">Synthesizing tactics</span> (strategy: {esc(d.get("strategy", "")[:150])})</div>')
+
+        elif etype == "synthesize_thinking":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#00838f;">Lean Agent Reasoning:</span>')
+            parts.append(f'<div class="thinking">{esc(d.get("reasoning", ""))}</div></div>')
+
+        elif etype == "synthesize_result":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#00838f;">Lean Agent Output:</span>')
+            parts.append(f'<pre>{esc(d.get("tactics", ""))}</pre></div>')
+
+        elif etype == "repair_start":
+            diags = d.get("diagnostics", [])
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#e65100;">Repair Attempt</span> ({len(diags)} errors)')
+            for diag in diags:
+                parts.append(f'<div class="diag">{esc(str(diag)[:200])}</div>')
+            parts.append('</div>')
+
+        elif etype == "repair_thinking":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#e65100;">Repair Reasoning:</span>')
+            parts.append(f'<div class="thinking">{esc(d.get("reasoning", ""))}</div></div>')
+
+        elif etype == "repair_result":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#e65100;">Repaired Code:</span>')
+            parts.append(f'<pre>{esc(d.get("tactics", ""))}</pre></div>')
+
+        elif etype == "verify_start":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label">Compiling Lean source...</span>')
+            parts.append(f'<pre>{esc(d.get("source", ""))}</pre></div>')
+
+        elif etype == "verify_result":
+            ok = d.get("success", False)
+            elapsed = d.get("elapsed", "?")
+            if ok:
+                parts.append(f'<div class="event">{time_html} <span class="evt-label turn-ok">&#10003; Compilation succeeded ({elapsed}s)</span></div>')
+            else:
+                parts.append(f'<div class="event">{time_html} <span class="evt-label turn-fail">&#10007; Compilation failed ({elapsed}s)</span>')
+                for diag in d.get("diagnostics", []):
+                    parts.append(f'<div class="diag">{esc(str(diag)[:200])}</div>')
+                parts.append('</div>')
+
+        elif etype == "diagnosis":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#f57f17;">&#128269; Diagnosis:</span>')
+            parts.append('<div class="diagnosis">')
+            if d.get("root_cause"):
+                parts.append(f'<p><b>Root cause:</b> {esc(d["root_cause"])}</p>')
+            if d.get("fix"):
+                parts.append(f'<p><b>Fix:</b> {esc(d["fix"])}</p>')
+            if d.get("lesson"):
+                parts.append(f'<p><b>Lesson:</b> {esc(d["lesson"])}</p>')
+            parts.append('</div></div>')
+
+        elif etype == "diagnosis_thinking":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#f57f17;">Diagnosis Reasoning:</span>')
+            parts.append(f'<div class="thinking">{esc(d.get("reasoning", ""))}</div></div>')
+
+        elif etype == "exact_suggestion":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label turn-ok">&#9889; Applied exact? suggestion</span></div>')
+
+        elif etype == "fix_hallucination":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#9c27b0;">Fixed hallucinated names:</span>')
+            for bad, good in d.get("replacements", {}).items():
+                parts.append(f'<div class="search-result"><s style="color:#c62828">{esc(bad)}</s> &rarr; <b style="color:#4caf50">{esc(good)}</b></div>')
+            parts.append('</div>')
+
+        elif etype == "decomposition":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#ab47bc;">Decomposition Plan:</span>')
+            parts.append(f'<div class="creative">{esc(d.get("description", ""))}</div></div>')
+
+        elif etype == "turn_complete":
+            result = d.get("result", "?")
+            css = "turn-ok" if result == "verified" else "turn-partial" if d.get("promising") else "turn-fail"
+            icon = "&#10003;" if result == "verified" else "~" if d.get("promising") else "&#10007;"
+            parts.append(f'<div class="event"><span class="evt-label {css}">{icon} Turn {d.get("turn", "?")}: {esc(result)} ({d.get("error_count", 0)} errors)</span></div>')
+
+        elif etype == "lesson_learned":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label">Lessons extracted:</span> {esc(d.get("lesson", ""))}</div>')
+
+        elif etype == "error":
+            parts.append(f'<div class="event">{time_html} <span class="evt-label turn-fail">Error:</span> {esc(d.get("message", ""))}</div>')
+
+        else:
+            # Catch-all for any event type not explicitly handled
+            import json as json_mod
+            parts.append(f'<div class="event">{time_html} <span class="evt-label">[{esc(etype)}]</span> <code>{esc(json_mod.dumps(d)[:300])}</code></div>')
 
     # Lessons
     if lessons_list:
-        parts.append('<h2>Lessons Learned</h2>')
+        parts.append('<h2>Session Lessons</h2>')
         for l in lessons_list:
             cat = l.get("category", "")
             hits = l.get("hit_count", 0)
-            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"][:300])}</div>')
+            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"][:500])}</div>')
 
-    parts.append('''
-<div class="no-print" style="margin-top:40px;color:#999;font-size:12px;">
-  Generated by LeanForge &middot; Print this page or Save as PDF
+    if global_lessons:
+        parts.append('<h2>Global Lessons (applied to all sessions)</h2>')
+        for l in global_lessons:
+            cat = l.get("category", "")
+            hits = l.get("hit_count", 0)
+            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"][:500])}</div>')
+
+    parts.append(f'''
+<div style="margin-top:40px;color:#999;font-size:11px;border-top:1px solid #ddd;padding-top:8px;">
+  Generated by LeanForge &middot; Session {esc(session_id)} &middot; {len(all_events)} events &middot; {s.get("total_turns", 0)} turns
+</div>
+<div class="no-print" style="margin-top:8px;">
+  <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
 </div>
 </body></html>''')
 
