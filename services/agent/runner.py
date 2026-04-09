@@ -180,8 +180,9 @@ def _collapse_simple_by_blocks(source: str) -> str:
         line = lines[i]
         stripped = line.rstrip()
 
-        # Check for pattern: line ending with `:= by` or `by` (with nothing after)
-        if re.search(r":=\s*by\s*$", stripped) or re.match(r"^\s+(by)\s*$", stripped):
+        # Only collapse `have/let := by` patterns — NOT standalone `by` lines.
+        # Standalone `by` (the theorem's proof block opener) must stay on its own line.
+        if re.search(r":=\s*by\s*$", stripped):
             # Look at the next non-empty line
             j = i + 1
             while j < len(lines) and not lines[j].strip():
@@ -198,7 +199,8 @@ def _collapse_simple_by_blocks(source: str) -> str:
                     ":= by" not in next_line and
                     not any(next_line.startswith(kw) for kw in [
                         "match ", "if ", "cases ", "induction ",
-                        "calc", "have ", "let ", "show ", "suffices ",
+                        "calc", "have ", "haveI ", "let ", "letI ",
+                        "show ", "suffices ", "obtain ",
                     ])
                 )
                 # Check if only one tactic line follows before returning to outer indent
