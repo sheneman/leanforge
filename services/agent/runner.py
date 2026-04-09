@@ -535,7 +535,9 @@ def run_turn(session_id: str) -> dict:
     strategy = plan.get("strategy_name", "unknown")
     log.info("plan", session_id=session_id, strategy=strategy)
 
+    action = plan.get("action", "PROVE")
     db.emit_event(session_id, "planner_result", {
+        "action": action,
         "strategy": strategy,
         "reasoning": plan.get("reasoning", "")[:300],
         "suggested_tactics": plan.get("suggested_tactics", "")[:3000],
@@ -544,68 +546,147 @@ def run_turn(session_id: str) -> dict:
     if strategy == "DONE":
         return {"result": "already_verified"}
 
-    # 2. Search mathlib (planner queries + creative agent queries)
+    # --- INVESTIGATE action: just search and log, don't synthesize ---
+    if action == "INVESTIGATE":
+        all_lemmas = []
+        for query in plan.get("search_queries", [])[:3]:
+            db.emit_event(session_id, "search_start", {"query": query})
+            results = search_mathlib(query, top_k=10)
+            for r in results:
+                db.log_lemma(session_id, r["name"], r.get("statement", ""), r.get("module", ""))
+                all_lemmas.append(r)
+            db.emit_event(session_id, "search_result", {
+                "query": query,
+                "results": [{"name": r["name"], "statement": r.get("statement", "")} for r in results[:5]],
+            })
+        # Log findings as a lesson so the planner sees them next turn
+        if all_lemmas:
+            findings = "; ".join(f"{l['name']}: {l.get('statement', '')[:100]}" for l in all_lemmas[:5])
+            db.log_lesson(session_id, f"Investigation found: {findings[:500]}", category="investigation")
+        db.log_turn(
+            session_id=session_id, turn_number=turn_number, strategy=strategy,
+            tactics_tried=[], lean_source="", result="investigation",
+            diagnostics=[], promising=True, notes=f"Investigated: {plan.get('strategy_description', '')[:200]}",
+        )
+        db.emit_event(session_id, "turn_complete", {
+            "turn": turn_number, "result": "investigation", "promising": True, "error_count": 0,
+        })
+        return {"result": "investigation", "turn": turn_number, "strategy": strategy}
+
+    # --- RESEARCH action: web search only ---
+    if action == "RESEARCH":
+        for query in plan.get("web_search_queries", plan.get("search_queries", []))[:2]:
+            results = web_search(query, count=5)
+            db.emit_event(session_id, "web_search_result", {
+                "query": query,
+                "results": [{"title": r.get("title", ""), "url": r.get("url", "")} for r in results[:5]],
+            })
+            if results:
+                refs = "; ".join(f"{r['title'][:60]} ({r['url'][:80]})" for r in results[:3])
+                db.log_lesson(session_id, f"Research: {refs}", category="web_reference")
+        db.log_turn(
+            session_id=session_id, turn_number=turn_number, strategy=strategy,
+            tactics_tried=[], lean_source="", result="research",
+            diagnostics=[], promising=True, notes=f"Researched: {plan.get('strategy_description', '')[:200]}",
+        )
+        db.emit_event(session_id, "turn_complete", {
+            "turn": turn_number, "result": "research", "promising": True, "error_count": 0,
+        })
+        return {"result": "research", "turn": turn_number, "strategy": strategy}
+
+    # --- DECOMPOSE action: log sub-problems for future turns ---
+    if action == "DECOMPOSE":
+        desc = plan.get("strategy_description", "")
+        db.log_lesson(session_id, f"Decomposition plan: {desc[:500]}", category="decomposition")
+        db.emit_event(session_id, "decomposition", {"description": desc[:500]})
+        db.log_turn(
+            session_id=session_id, turn_number=turn_number, strategy=strategy,
+            tactics_tried=[], lean_source="", result="decomposition",
+            diagnostics=[], promising=True, notes=desc[:500],
+        )
+        db.emit_event(session_id, "turn_complete", {
+            "turn": turn_number, "result": "decomposition", "promising": True, "error_count": 0,
+        })
+        return {"result": "decomposition", "turn": turn_number, "strategy": strategy}
+
+    # --- SIMPLIFY action: try minimal proof with search tactics ---
+    if action == "SIMPLIFY":
+        # Build a minimal proof using exact?, apply?, simp?
+        session_lessons = [l["lesson"] for l in db.get_lessons(session_id)]
+        simple_tactics, _ = synthesize_tactics(
+            session["lean_statement"],
+            strategy="Try the simplest possible proof: exact?, apply?, simp?, or decide. One line if possible.",
+            session_id=session_id,
+            lessons=session_lessons,
+        )
+        # Fall through to verification — skip search and synthesis
+        plan["strategy_description"] = "Simplify: try minimal search tactics"
+
+    # --- PROVE / SIMPLIFY: search + synthesize + verify ---
     all_lemmas = []
-    search_queries = plan.get("search_queries", [])[:3]
-    if creative_searches:
-        search_queries = search_queries + creative_searches[:2]
-    for query in search_queries:
-        db.emit_event(session_id, "search_start", {"query": query})
-        results = search_mathlib(query, top_k=5)
-        for r in results:
-            db.log_lemma(session_id, r["name"], r.get("statement", ""), r.get("module", ""))
-            all_lemmas.append(r)
-        db.emit_event(session_id, "search_result", {
-            "query": query,
-            "results": [{"name": r["name"], "statement": r.get("statement", "")[:150]} for r in results[:3]],
-        })
 
-    # 2b. Web search (if planner requested it — last resort for research)
-    web_results = []
-    for query in plan.get("web_search_queries", [])[:2]:
-        results = web_search(query, count=3)
-        web_results.extend(results)
-        log.info("web_search", session_id=session_id, query=query, results=len(results))
-        db.emit_event(session_id, "web_search_result", {
-            "query": query,
-            "results": [{"title": r.get("title", ""), "url": r.get("url", "")} for r in results[:3]],
-        })
-    # Store web findings as lightweight reference notes (title + URL only).
-    # NOT the raw description text — that's noisy Lean 3 / tutorial content.
-    if web_results:
-        refs = "; ".join(f"{r['title'][:60]} ({r['url'][:80]})" for r in web_results[:3])
-        db.log_lesson(
-            session_id,
-            f"Web refs for '{plan.get('web_search_queries', ['?'])[0][:50]}': {refs}",
-            category="web_reference",
-        )
+    # 2. Search mathlib (PROVE only — SIMPLIFY skips search)
+    if action == "PROVE":
+        search_queries = plan.get("search_queries", [])[:3]
+        if creative_searches:
+            search_queries = search_queries + creative_searches[:2]
+        for query in search_queries:
+            db.emit_event(session_id, "search_start", {"query": query})
+            results = search_mathlib(query, top_k=5)
+            for r in results:
+                db.log_lemma(session_id, r["name"], r.get("statement", ""), r.get("module", ""))
+                all_lemmas.append(r)
+            db.emit_event(session_id, "search_result", {
+                "query": query,
+                "results": [{"name": r["name"], "statement": r.get("statement", "")[:150]} for r in results[:3]],
+            })
 
-    # 3. Synthesize tactics via Leanstral (ALL code generation goes through Leanstral)
+        # 2b. Web search (if planner requested it)
+        web_results = []
+        for query in plan.get("web_search_queries", [])[:2]:
+            results = web_search(query, count=3)
+            web_results.extend(results)
+            log.info("web_search", session_id=session_id, query=query, results=len(results))
+            db.emit_event(session_id, "web_search_result", {
+                "query": query,
+                "results": [{"title": r.get("title", ""), "url": r.get("url", "")} for r in results[:3]],
+            })
+        if web_results:
+            refs = "; ".join(f"{r['title'][:60]} ({r['url'][:80]})" for r in web_results[:3])
+            db.log_lesson(
+                session_id,
+                f"Web refs for '{plan.get('web_search_queries', ['?'])[0][:50]}': {refs}",
+                category="web_reference",
+            )
+
+    # 3. Synthesize tactics
     strategy_desc = plan.get("strategy_description", "")
-    lemma_hints = ""
-    if all_lemmas:
-        lemma_hints = "\n".join(
-            f"  {l['name']}: {l.get('statement', '')[:150]}" for l in all_lemmas[:10]
-        )
-    # Do NOT feed web search snippets to the code synthesizer.
-    # Web results often contain Lean 3 syntax or generic tutorials
-    # that cause hallucinated/invalid Lean 4 code.
-
-    db.emit_event(session_id, "synthesize_start", {
-        "strategy": strategy_desc[:300],
-        "hints_len": len(lemma_hints),
-    })
-    # Fetch lessons so the synthesizer knows session constraints
     session_lessons = [l["lesson"] for l in db.get_lessons(session_id)]
 
-    leanstral_tactics, _ = synthesize_tactics(
-        session["lean_statement"],
-        strategy=strategy_desc,
-        hints=lemma_hints,
-        session_id=session_id,
-        lemmas=all_lemmas,
-        lessons=session_lessons,
-    )
+    if action == "SIMPLIFY":
+        # SIMPLIFY already created simple_tactics above
+        leanstral_tactics = simple_tactics
+        db.emit_event(session_id, "synthesize_result", {"tactics": leanstral_tactics[:3000]})
+    else:
+        # PROVE: full synthesis with lemma hints
+        lemma_hints = ""
+        if all_lemmas:
+            lemma_hints = "\n".join(
+                f"  {l['name']}: {l.get('statement', '')[:150]}" for l in all_lemmas[:10]
+            )
+        db.emit_event(session_id, "synthesize_start", {
+            "strategy": strategy_desc[:300],
+            "hints_len": len(lemma_hints),
+        })
+        leanstral_tactics, _ = synthesize_tactics(
+            session["lean_statement"],
+            strategy=strategy_desc,
+            hints=lemma_hints,
+            session_id=session_id,
+            lemmas=all_lemmas,
+            lessons=session_lessons,
+        )
+
     db.emit_event(session_id, "synthesize_result", {
         "tactics": leanstral_tactics[:3000],
     })

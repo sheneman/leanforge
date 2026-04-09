@@ -26,9 +26,18 @@ LEANSTRAL_API_MODEL = os.getenv("LEANSTRAL_API_MODEL", "")
 # Planner produces STRATEGY ONLY — no Lean code.
 # All Lean code generation goes through Leanstral.
 PLANNER_SYSTEM_PROMPT = """\
-You are a Lean 4 theorem proving strategist. You propose proof STRATEGIES \
-in natural language. You do NOT write Lean code — a specialized Lean model \
-will generate the code based on your strategy.
+You are a Lean 4 theorem proving strategist. You choose WHAT TO DO NEXT \
+and propose proof STRATEGIES in natural language. You do NOT write Lean code.
+
+AVAILABLE ACTIONS (choose ONE):
+- PROVE: Search for lemmas, synthesize a proof, and verify it. The default action.
+- INVESTIGATE: Look up a specific lemma's exact signature and behavior before trying \
+  to use it. Use when you're unsure about a lemma's argument types or return type.
+- DECOMPOSE: Split the theorem into sub-lemmas. Describe each sub-lemma and how they \
+  combine. Use for complex theorems that can't be solved in one step.
+- RESEARCH: Do web search for Lean 4 / Mathlib4 documentation about a specific topic. \
+  Use only when FAISS retrieval returned nothing useful.
+- SIMPLIFY: Try a minimal proof using just exact?, apply?, or simp? to let Lean search.
 
 RULES:
 1. Read the TECHNICAL LESSONS section. These are HARD FACTS.
@@ -37,16 +46,16 @@ RULES:
 4. If a promising direction exists, BUILD ON IT.
 5. Do NOT write Lean tactics or code. Describe the approach in natural language.
 6. Be specific about which mathlib lemmas to use and what proof structure to follow.
+7. If there's an IMMEDIATE FIX lesson, act on it — it's from the last failed turn.
 
 Respond in EXACTLY this format:
 
+ACTION: <one of: PROVE, INVESTIGATE, DECOMPOSE, RESEARCH, SIMPLIFY>
 STRATEGY: <short name, 3-8 words>
 DESCRIPTION: <detailed description of the proof approach — which lemmas to use, \
 what case splits to make, what induction scheme to follow, etc. 2-5 sentences.>
 SEARCH: <mathlib search query to find relevant lemmas>
-WEB_SEARCH: <optional web search query targeting Lean 4 / Mathlib4 docs ONLY, or NONE. \
-Do NOT search for Lean 3 or general math. Only use when the FAISS retrieval search \
-returned nothing useful. Example: "Mathlib4 IsPGroup commutative card prime squared">
+WEB_SEARCH: <optional web search query targeting Lean 4 / Mathlib4 docs ONLY, or NONE>
 REASONING: <why this might work given past failures, 1-2 sentences>
 """
 
@@ -195,6 +204,12 @@ def _parse_structured_response(raw: str) -> dict:
 
     # Parse structured text format
     plan: dict[str, Any] = {}
+
+    # Extract ACTION:
+    m = re.search(r"ACTION:\s*(.+?)(?:\n|$)", raw)
+    action = m.group(1).strip().upper() if m else "PROVE"
+    valid_actions = {"PROVE", "INVESTIGATE", "DECOMPOSE", "RESEARCH", "SIMPLIFY"}
+    plan["action"] = action if action in valid_actions else "PROVE"
 
     # Extract STRATEGY:
     m = re.search(r"STRATEGY:\s*(.+?)(?:\n|$)", raw)
