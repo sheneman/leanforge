@@ -762,6 +762,7 @@ body {{
 .action-btns .stop-btn {{ border-color: var(--red); color: var(--red); }}
 .action-btns .resume-btn {{ border-color: var(--green); color: var(--green); }}
 .action-btns .delete-btn {{ border-color: #888; color: #888; font-size: 0.8em; }}
+.action-btns .export-btn {{ border-color: var(--blue); color: var(--blue); font-size: 0.8em; }}
 
 .lesson-list {{
   max-height: 300px;
@@ -1054,6 +1055,7 @@ function renderRightSidebar(s) {{
   if (!isRunning) {{
     html += '<button class="delete-btn" onclick="deleteSession(\\''+esc(s.session_id)+'\\')">Delete</button>';
   }}
+  html += '<button class="export-btn" onclick="exportSession(\\''+esc(s.session_id)+'\\')">Export PDF</button>';
   html += '</div></div>';
 
   // Strategies
@@ -1130,6 +1132,10 @@ async function quickDelete(sid) {{
     currentSession = null;
   }}
   await loadSessions();
+}}
+
+function exportSession(sid) {{
+  window.open(PREFIX + '/api/sessions/' + encodeURIComponent(sid) + '/export', '_blank');
 }}
 
 // --- Events ---
@@ -1370,6 +1376,133 @@ sessionPollTimer = setInterval(loadSessions, 10000);
 </script>
 </body>
 </html>''')
+
+
+@app.get("/api/sessions/{session_id}/export")
+async def api_export_session(session_id: str):
+    """Generate a print-ready HTML page for the proof session.
+
+    Opens in a new tab — user can print/save as PDF from the browser.
+    """
+    from services.agent import db as agent_db
+    import html as html_mod
+
+    s = agent_db.get_session(session_id)
+    if not s:
+        return HTMLResponse("<h1>Session not found</h1>", status_code=404)
+
+    turns_list = list(agent_db.turns().find(
+        {"session_id": session_id}
+    ).sort("turn", 1))
+
+    lessons_list = list(agent_db.lessons().find(
+        {"session_id": session_id}
+    ).sort("hit_count", -1).limit(20))
+
+    esc = html_mod.escape
+
+    # Build the HTML
+    status_color = {
+        "verified": "#4caf50", "in_progress": "#2196f3",
+        "abandoned": "#888", "stuck": "#ff9800",
+    }.get(s.get("status", ""), "#888")
+
+    parts = [f'''<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>LeanForge — {esc(session_id)}</title>
+<style>
+  @media print {{
+    body {{ margin: 0.5in; }}
+    .no-print {{ display: none; }}
+    pre {{ white-space: pre-wrap; word-wrap: break-word; }}
+  }}
+  body {{
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    max-width: 850px; margin: 40px auto; padding: 0 20px;
+    color: #222; line-height: 1.5; font-size: 14px;
+  }}
+  h1 {{ font-size: 22px; margin-bottom: 4px; }}
+  h2 {{ font-size: 17px; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 28px; }}
+  h3 {{ font-size: 14px; margin-top: 16px; margin-bottom: 4px; }}
+  .meta {{ color: #666; font-size: 13px; margin-bottom: 16px; }}
+  .status {{ display: inline-block; padding: 2px 10px; border-radius: 12px;
+    color: white; font-size: 12px; font-weight: 600; }}
+  pre, code {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12.5px; }}
+  pre {{ background: #f5f5f5; padding: 12px 16px; border-radius: 6px;
+    overflow-x: auto; border: 1px solid #e0e0e0; }}
+  .turn {{ margin-bottom: 20px; page-break-inside: avoid; }}
+  .turn-header {{ font-weight: 600; margin-bottom: 4px; }}
+  .turn-ok {{ color: #4caf50; }}
+  .turn-fail {{ color: #c62828; }}
+  .turn-partial {{ color: #ff9800; }}
+  .diag {{ color: #c62828; font-size: 12px; margin-left: 16px; }}
+  .lesson {{ margin: 4px 0; padding: 4px 8px; background: #fff8e1; border-left: 3px solid #ffc107;
+    font-size: 12.5px; }}
+  .verified-proof {{ border: 2px solid #4caf50; background: #e8f5e9; padding: 16px;
+    border-radius: 8px; }}
+  .print-btn {{ background: #2196f3; color: white; border: none; padding: 8px 20px;
+    border-radius: 6px; cursor: pointer; font-size: 14px; margin: 16px 0; }}
+  .print-btn:hover {{ background: #1976d2; }}
+</style>
+</head><body>
+<button class="print-btn no-print" onclick="window.print()">Print / Save as PDF</button>
+<h1>LeanForge Proof Session: {esc(session_id)}</h1>
+<div class="meta">
+  <span class="status" style="background:{status_color}">{esc(s.get("status", "?"))}</span>
+  &nbsp; {s.get("total_turns", 0)} turns
+  &nbsp;&middot;&nbsp; Created: {str(s.get("created_at", ""))[:19]}
+  &nbsp;&middot;&nbsp; Updated: {str(s.get("updated_at", ""))[:19]}
+</div>
+
+<h2>Problem</h2>
+<p>{esc(s.get("problem", ""))}</p>
+
+<h2>Lean 4 Statement</h2>
+<pre>{esc(s.get("lean_statement", ""))}</pre>
+''']
+
+    # Verified proof
+    if s.get("verified_proof"):
+        parts.append(f'''
+<h2>Verified Proof</h2>
+<div class="verified-proof"><pre>{esc(s["verified_proof"])}</pre></div>
+''')
+
+    # Turn history
+    parts.append('<h2>Turn History</h2>')
+    for t in turns_list:
+        result = t.get("result", "?")
+        css = "turn-ok" if result == "verified" else "turn-partial" if t.get("promising") else "turn-fail"
+        icon = "\u2713" if result == "verified" else "~" if t.get("promising") else "\u2717"
+        parts.append(f'<div class="turn">')
+        parts.append(f'<div class="turn-header {css}">{icon} Turn {t.get("turn", "?")}: '
+                      f'{esc(t.get("strategy", "")[:80])} &rarr; {esc(result)}</div>')
+
+        if t.get("lean_source"):
+            src = t["lean_source"][:2000]
+            parts.append(f'<pre>{esc(src)}</pre>')
+
+        for d in t.get("diagnostics", [])[:3]:
+            parts.append(f'<div class="diag">{esc(d[:150])}</div>')
+
+        parts.append('</div>')
+
+    # Lessons
+    if lessons_list:
+        parts.append('<h2>Lessons Learned</h2>')
+        for l in lessons_list:
+            cat = l.get("category", "")
+            hits = l.get("hit_count", 0)
+            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"][:300])}</div>')
+
+    parts.append('''
+<div class="no-print" style="margin-top:40px;color:#999;font-size:12px;">
+  Generated by LeanForge &middot; Print this page or Save as PDF
+</div>
+</body></html>''')
+
+    return HTMLResponse("\n".join(parts))
 
 
 @app.get("/health")
