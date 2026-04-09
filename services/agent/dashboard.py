@@ -1135,7 +1135,8 @@ async function quickDelete(sid) {{
 }}
 
 function exportSession(sid) {{
-  window.open(PREFIX + '/api/sessions/' + encodeURIComponent(sid) + '/export', '_blank');
+  // Direct PDF download via WeasyPrint
+  window.location.href = PREFIX + '/api/sessions/' + encodeURIComponent(sid) + '/export/pdf';
 }}
 
 // --- Events ---
@@ -1378,10 +1379,10 @@ sessionPollTimer = setInterval(loadSessions, 10000);
 </html>''')
 
 
-@app.get("/api/sessions/{session_id}/export")
-async def api_export_session(session_id: str):
-    """Generate a comprehensive print-ready HTML page with EVERYTHING:
+async def _build_export_html(session_id: str):
+    """Generate a comprehensive HTML page with EVERYTHING:
     all thinking traces, creative ideas, search results, diagnoses, etc.
+    Returns HTML string or HTMLResponse on error.
     """
     from services.agent import db as agent_db
     import html as html_mod
@@ -1661,7 +1662,42 @@ async def api_export_session(session_id: str):
 </div>
 </body></html>''')
 
-    return HTMLResponse("\n".join(parts))
+    return "\n".join(parts)
+
+
+@app.get("/api/sessions/{session_id}/export")
+async def api_export_html(session_id: str):
+    """Export as HTML page (viewable in browser)."""
+    result = await _build_export_html(session_id)
+    if isinstance(result, HTMLResponse):
+        return result  # error response
+    return HTMLResponse(result)
+
+
+@app.get("/api/sessions/{session_id}/export/pdf")
+async def api_export_pdf(session_id: str):
+    """Export as downloadable PDF via WeasyPrint."""
+    result = await _build_export_html(session_id)
+    if isinstance(result, HTMLResponse):
+        return result  # error response
+
+    try:
+        from weasyprint import HTML as WeasyHTML
+        pdf_bytes = WeasyHTML(string=result).write_pdf()
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="leanforge_{session_id}.pdf"',
+            },
+        )
+    except Exception as e:
+        import html as html_mod
+        return HTMLResponse(
+            f"<h1>PDF generation failed</h1><p>{html_mod.escape(str(e))}</p>"
+            f"<p><a href='../export'>View as HTML instead</a></p>",
+            status_code=500,
+        )
 
 
 @app.get("/health")
