@@ -1553,7 +1553,7 @@ async def _build_export_html(session_id: str):
             parts.append('</div>')
 
         elif etype == "synthesize_start":
-            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#00838f;">Synthesizing tactics</span> (strategy: {esc(d.get("strategy", "")[:150])})</div>')
+            parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#00838f;">Synthesizing tactics</span> (strategy: {esc(d.get("strategy", ""))})</div>')
 
         elif etype == "synthesize_thinking":
             parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#00838f;">Lean Agent Reasoning:</span>')
@@ -1567,7 +1567,7 @@ async def _build_export_html(session_id: str):
             diags = d.get("diagnostics", [])
             parts.append(f'<div class="event">{time_html} <span class="evt-label" style="color:#e65100;">Repair Attempt</span> ({len(diags)} errors)')
             for diag in diags:
-                parts.append(f'<div class="diag">{esc(str(diag)[:200])}</div>')
+                parts.append(f'<div class="diag">{esc(str(diag))}</div>')
             parts.append('</div>')
 
         elif etype == "repair_thinking":
@@ -1590,7 +1590,7 @@ async def _build_export_html(session_id: str):
             else:
                 parts.append(f'<div class="event">{time_html} <span class="evt-label turn-fail">&#10007; Compilation failed ({elapsed}s)</span>')
                 for diag in d.get("diagnostics", []):
-                    parts.append(f'<div class="diag">{esc(str(diag)[:200])}</div>')
+                    parts.append(f'<div class="diag">{esc(str(diag))}</div>')
                 parts.append('</div>')
 
         elif etype == "diagnosis":
@@ -1644,14 +1644,14 @@ async def _build_export_html(session_id: str):
         for l in lessons_list:
             cat = l.get("category", "")
             hits = l.get("hit_count", 0)
-            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"][:500])}</div>')
+            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"])}</div>')
 
     if global_lessons:
         parts.append('<h2>Global Lessons (applied to all sessions)</h2>')
         for l in global_lessons:
             cat = l.get("category", "")
             hits = l.get("hit_count", 0)
-            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"][:500])}</div>')
+            parts.append(f'<div class="lesson">[{esc(cat)}, {hits}x] {esc(l["lesson"])}</div>')
 
     parts.append(f'''
 <div style="margin-top:40px;color:#999;font-size:11px;border-top:1px solid #ddd;padding-top:8px;">

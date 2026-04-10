@@ -333,7 +333,7 @@ def creative_brainstorm(session_id: str) -> list[dict]:
     if reasoning:
         from services.agent.db import emit_event
         emit_event(session_id, "creativity_thinking", {
-            "reasoning": reasoning[:5000],
+            "reasoning": reasoning,
         })
 
     # Parse ideas
@@ -393,7 +393,7 @@ def plan_next_step(session_id: str) -> dict:
     if reasoning:
         from services.agent.db import emit_event
         emit_event(session_id, "planner_thinking", {
-            "reasoning": reasoning[:5000],
+            "reasoning": reasoning,
         })
 
     plan = _parse_structured_response(raw)
@@ -500,7 +500,7 @@ def synthesize_tactics(
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "synthesize_thinking", {
-                "reasoning": reasoning[:5000],
+                "reasoning": reasoning,
             })
         return content, reasoning
     except Exception as e:
@@ -565,7 +565,7 @@ def repair_tactics(
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "repair_thinking", {
-                "reasoning": reasoning[:5000],
+                "reasoning": reasoning,
             })
         return content, reasoning
     except Exception as e:
@@ -634,7 +634,7 @@ def diagnose_failure(
         if reasoning and session_id:
             from services.agent.db import emit_event
             emit_event(session_id, "diagnosis_thinking", {
-                "reasoning": reasoning[:3000],
+                "reasoning": reasoning,
             })
 
         # Parse structured response
