@@ -1115,8 +1115,13 @@ def run_loop(session_id: str, max_turns: int = 1000, delay: int = TURN_DELAY_SEC
     # Verify the theorem statement compiles before starting the proof loop.
     # Iterate up to 5 times: compile "statement := by sorry", if errors,
     # ask the LLM to fix the statement with error feedback, repeat.
+    # Skip this check on resume if the statement was already validated.
     from services.agent.planner import _call_llm, PLANNER_MODEL
     MAX_FORMALIZE_RETRIES = 5
+
+    if session.get("statement_validated"):
+        log.info("statement_already_validated_skipping", session_id=session_id)
+        MAX_FORMALIZE_RETRIES = -1  # Skip the loop below
 
     for attempt in range(MAX_FORMALIZE_RETRIES + 1):
         check_source = f"import Mathlib.Tactic\n\n{session['lean_statement']} := by sorry\n"
@@ -1142,6 +1147,7 @@ def run_loop(session_id: str, max_turns: int = 1000, delay: int = TURN_DELAY_SEC
                 "attempt": attempt + 1,
                 "status": "valid",
             })
+            db.update_session(session_id, statement_validated=True)
             log.info("statement_validated", session_id=session_id, attempts=attempt + 1)
             break  # Statement compiles — proceed to proof loop
 
