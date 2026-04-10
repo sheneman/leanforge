@@ -541,8 +541,8 @@ def run_turn(session_id: str) -> dict:
     db.emit_event(session_id, "planner_result", {
         "action": action,
         "strategy": strategy,
-        "reasoning": plan.get("reasoning", "")[:300],
-        "suggested_tactics": plan.get("suggested_tactics", "")[:3000],
+        "reasoning": plan.get("reasoning", ""),
+        "suggested_tactics": plan.get("suggested_tactics", ""),
     })
 
     if strategy == "DONE":
@@ -1054,7 +1054,7 @@ def _auto_formalize(session_id: str, problem: str) -> str:
     try:
         raw, reasoning = _call_llm(system, user, model=PLANNER_MODEL)
         if reasoning:
-            db.emit_event(session_id, "formalize_thinking", {"reasoning": reasoning[:3000]})
+            db.emit_event(session_id, "formalize_thinking", {"reasoning": reasoning})
         # Clean up: strip fences, thinking tags
         raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
         raw = re.sub(r"```\w*", "", raw).strip()
