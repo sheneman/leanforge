@@ -75,7 +75,7 @@ def _call_leanstral(user: str) -> tuple[str, str]:
         raise RuntimeError("LLM_API_BASE, LLM_API_KEY, and LEANSTRAL_API_MODEL must be configured")
 
     url = f"{LLM_API_BASE}/chat/completions"
-    with httpx.Client(timeout=300) as client:
+    with httpx.Client(timeout=600) as client:
         resp = client.post(
             url,
             headers={
@@ -111,7 +111,7 @@ def _call_llm(system: str, user: str, model: str | None = None) -> tuple[str, st
         raise RuntimeError("LLM_API_BASE, LLM_API_KEY, and model must be configured")
 
     url = f"{LLM_API_BASE}/chat/completions"
-    with httpx.Client(timeout=300) as client:
+    with httpx.Client(timeout=600) as client:
         resp = client.post(
             url,
             headers={
