@@ -472,7 +472,12 @@ def build_context(session_id: str, max_recent: int = 5, max_promising: int = 5) 
         "best_partial_proof": session.get("best_partial_proof", ""),
         "lessons": [
             l["lesson"] for l in found_lessons[:20]
+            if l.get("category") != "creative"
         ],
+        "creative_ideas": [
+            l["lesson"] for l in found_lessons
+            if l.get("category") == "creative"
+        ][:5],
         "recent_turns": [
             {
                 "turn": t["turn"],

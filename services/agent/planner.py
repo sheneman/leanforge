@@ -152,6 +152,12 @@ def _format_context_for_prompt(ctx: dict) -> str:
         for lesson in ctx["lessons"]:
             lines.append(f"  - {lesson}")
 
+    # Creative ideas — suggestions to consider, NOT hard facts
+    if ctx.get("creative_ideas"):
+        lines.append(f"\n## CREATIVE IDEAS (speculative suggestions from the creativity agent — consider them, evaluate if they apply)")
+        for idea in ctx["creative_ideas"]:
+            lines.append(f"  * {idea}")
+
     if ctx["best_partial_proof"]:
         lines.append(f"\n## Best partial proof so far\n{ctx['best_partial_proof'][:1000]}")
 
